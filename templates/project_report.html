@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}{{ p.name }} · report{% endblock %}
+{% block content %}
+<div class="row noprint" style="justify-content:space-between; margin-bottom:12px">
+  <a href="/projects#{{ p.id }}">← Back to project</a>
+  <button onclick="print()">Print / Save as PDF</button>
+</div>
+<div class="card">
+  <h1>{{ p.name }}</h1>
+  <p class="muted">Protein Analyzer project report · created {{ when(p.created).strftime('%Y-%m-%d') }} ·
+    last changed {{ when(p.updated).strftime('%Y-%m-%d %H:%M') }} · {{ p['items']|length }} item(s)</p>
+  {% if p.notes %}<h2>Notes</h2><p style="white-space:pre-wrap">{{ p.notes }}</p>{% endif %}
+</div>
+{% for it in p['items'] %}
+<div class="card">
+  <h2>{{ loop.index }}. {{ it.title }} <span class="muted small" style="font-weight:400">{{ it.kind }} · {{ when(it.added).strftime('%Y-%m-%d') }}</span></h2>
+  {% if it.note %}<blockquote style="white-space:pre-wrap; border-left:3px solid var(--accent); margin:0 0 10px; padding-left:10px">{{ it.note }}</blockquote>{% endif %}
+  {% set d = it.data %}
+  {% if it.kind in ('protein', 'analysis') %}
+    {% set a = d.analysis if d.analysis else d %}
+    {% if d.accession %}<p><b>{{ d.accession }}</b> {{ d.name or '' }} · <i>{{ d.organism or '' }}</i></p>{% endif %}
+    {% if d.function %}<p class="small">{{ d.function[0] }}</p>{% endif %}
+    {% if a.length %}<table><tr><th>Length</th><th>MW (kDa)</th><th>GRAVY</th><th>pI</th><th>Charge pH 7</th><th>Aromaticity</th><th>TM segments</th></tr>
+      <tr><td>{{ a.length }}</td><td>{{ '%.2f' % (a.molecular_weight / 1000) }}</td><td>{{ '%.3f' % a.gravy }}</td><td>{{ '%.2f' % a.isoelectric_point }}</td>
+      <td>{{ '%+.2f' % a.charge_ph7 }}</td><td>{{ '%.3f' % a.aromaticity }}</td><td>{{ a.n_tm_segments }}</td></tr></table>{% endif %}
+  {% elif it.kind == 'comparison' %}
+    <p>{{ d.name_a }} vs {{ d.name_b }} ({{ d.mode }}): <b>{{ d.identity }}% identity</b>, {{ d.similarity }}% similarity, score {{ d.score }}, {{ d.gaps }} gaps.</p>
+    <pre class="aln">{% for i in range(0, d.length, 60) %}A {{ d.aligned_a[i:i+60] }}
+  {{ d.match_line[i:i+60] }}
+B {{ d.aligned_b[i:i+60] }}
+
+{% endfor %}</pre>
+  {% elif it.kind == 'mutation' %}
+    <p><b>{{ d.mutation }}</b> in {{ d.protein or d.accession }}: {{ d.from_name }} → {{ d.to_name }} {% if d.from_group %}({{ d.from_group }} → {{ d.to_group }}){% endif %},
+      BLOSUM62 {{ d.blosum62 }}{% if d.get('alphamissense') is not none %}, AlphaMissense {{ '%.2f' % d.alphamissense }} ({{ d.alphamissense_class }}){% endif %}.</p>
+    {% if d.known_variants %}<p class="small">Known: {% for v in d.known_variants %}{{ v['from'] }}{{ v.position }}{{ v.to }}: {{ v.description }}{% if not loop.last %}; {% endif %}{% endfor %}</p>{% endif %}
+    {% if d.notes %}<ul class="small">{% for n in d.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
+  {% elif it.kind == 'classification' %}
+    <table><tr><th>Protein</th><th>Prediction</th><th>Confidence</th><th>2nd choice</th><th>Reliable</th></tr>
+      {% for r in d.predictions %}<tr><td>{{ r.name }}</td><td><b>{{ r.prediction }}</b></td><td>{{ '%.0f' % (100 * r.confidence) }}%</td>
+        <td>{{ r.top2[1].label }}</td><td>{{ 'yes' if r.reliable else 'no' }}</td></tr>{% endfor %}</table>
+    <p class="muted small">Model: {{ d.backend }}</p>
+  {% elif it.kind == 'alignment' %}
+    <p>{{ d.names|join(', ') }}</p><p class="small">Tree (Newick): <code style="overflow-wrap:anywhere">{{ d.newick }}</code></p>
+    {% if d.rows %}<pre class="msa">{% for i in range(0, d.length, 60) %}{% for r in d.rows %}{{ '%-22s' % d.names[loop.index0][:22] }}{{ r[i:i+60] }}
+{% endfor %}
+{% endfor %}</pre>{% endif %}
+  {% elif it.kind == 'superposition' %}
+    <p>{{ d.name_a }} vs {{ d.name_b }}: <b>TM-score {{ '%.2f' % d.tm_score if d.get('tm_score') is not none else '–' }}</b>, core RMSD {{ d.rmsd_core }} Å over {{ d.core_pairs }} residues,
+      sequence identity {{ d.sequence_identity }}%.</p>
+  {% elif it.kind == 'blast' %}
+    <table><tr><th>Accession</th><th>Name</th><th>Organism</th><th>Identity</th><th>E-value</th></tr>
+      {% for h in d.hits[:25] %}<tr><td>{{ h.accession }}</td><td>{{ h.name }}</td><td><i>{{ h.organism }}</i></td><td>{{ h.identity }}%</td><td>{{ h.evalue }}</td></tr>{% endfor %}</table>
+  {% endif %}
+  {% if it.provenance %}<p class="muted small" style="margin-top:8px">{{ it.provenance.app }} · {{ it.provenance.generated }}{% if it.provenance.uniprot_release %} · UniProtKB release {{ it.provenance.uniprot_release }}{% endif %}</p>{% endif %}
+</div>
+{% endfor %}
+{% if pv.methods or pv.sources %}
+<div class="card">
+  <h2>Methods &amp; data sources</h2>
+  {% if pv.apps or pv.releases %}<p>Generated with {{ pv.apps|join(', ') or 'Protein Analyzer' }}{% if pv.releases %}; UniProtKB release(s) {{ pv.releases|join(', ') }}{% endif %}.</p>{% endif %}
+  <ul class="small">{% for m in pv.methods %}<li>{{ m }}</li>{% endfor %}</ul>
+  {% if pv.sources %}<h3>Data sources (please cite)</h3>
+  <ul class="small">{% for s in pv.sources %}<li><b>{{ s.name }}</b> ({{ s.licence }}), {{ s.url }}. {{ s.cite }}</li>{% endfor %}</ul>{% endif %}
+  <p class="muted small">Check each source's own citation page for its latest reference. Protein Analyzer is a teaching/exploration tool; verify key numbers with the standard tools listed on its Methods page.</p>
+</div>
+{% endif %}
+{% endblock %}

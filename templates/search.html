@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}UniProt search · Protein Analyzer{% endblock %}
+{% block content %}
+<h1>Search UniProtKB</h1>
+<nav class="subtabs"><a class="on" href="/search">By name / keyword</a><a href="/blast">By sequence similarity (BLAST)</a></nav>
+<p class="sub">Type a name or keyword and narrow it with the filters. Advanced users can type full
+  <a href="https://www.uniprot.org/help/query-fields" target="_blank" rel="noopener">UniProt query syntax</a>. An accession (P69905) opens the entry directly.</p>
+<div class="card">
+  <form id="f">
+    <div class="row">
+      <input class="grow" type="text" id="q" placeholder="e.g. insulin, kinase, hemoglobin" autofocus aria-label="Search text">
+      <button id="go">Search</button>
+    </div>
+    <div class="row" style="margin-top:10px; align-items:flex-end">
+      <label class="field">Organism
+        <select id="org" style="width:auto">
+          <option value="">Any organism</option>
+          <optgroup label="Species">
+            <option value="organism_id:9606">Human</option><option value="organism_id:10090">Mouse</option>
+            <option value="organism_id:10116">Rat</option><option value="organism_id:7955">Zebrafish</option>
+            <option value="organism_id:7227">Fruit fly (Drosophila)</option><option value="organism_id:6239">Worm (C. elegans)</option>
+            <option value="organism_id:559292">Baker's yeast</option><option value="organism_id:83333">E. coli K-12</option>
+            <option value="organism_id:3702">Arabidopsis (thale cress)</option>
+          </optgroup>
+          <optgroup label="Groups">
+            <option value="taxonomy_id:40674">All mammals</option><option value="taxonomy_id:2">All bacteria</option>
+            <option value="taxonomy_id:10239">All viruses</option><option value="taxonomy_id:4751">All fungi</option>
+            <option value="taxonomy_id:33090">All plants</option>
+          </optgroup>
+          <option value="custom">Other (taxon ID)…</option>
+        </select></label>
+      <label class="field" id="taxwrap" style="display:none">Taxon ID <input type="number" id="tax" placeholder="9913" min="1"></label>
+      <label class="field">Length from <input type="number" id="lmin" min="1" placeholder="min"></label>
+      <label class="field">to <input type="number" id="lmax" min="1" placeholder="max"></label>
+      <span class="checks" style="margin-bottom:6px"><label><input type="checkbox" id="rev" checked> Reviewed only</label><span class="tipwrap"></span></span>
+      <label class="field">Per page <select id="size" style="width:auto"><option>10</option><option selected>25</option><option>50</option><option>100</option></select></label>
+    </div>
+    <p class="muted small" style="margin:8px 0 0">Query sent to UniProt: <code id="qtext">–</code></p>
+  </form>
+  <div id="recent" class="recent"></div>
+  <div id="msg"></div>
+</div>
+<div class="card" id="res" style="display:none">
+  <div class="row" style="justify-content:space-between; margin-bottom:8px">
+    <span id="info" class="muted"></span>
+    <span class="row">
+      <button id="cmp" class="secondary" disabled>Compare selected (0/2)</button>
+      <button class="secondary" id="prev">← Prev</button><button class="secondary" id="next">Next →</button>
+    </span>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th title="Tick two proteins to compare them">✓</th><th>Accession</th><th>Name</th><th>Gene</th><th>Organism</th><th>Length</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+// Reviewed-only tooltip (rendered here so the glossary text lives in one place).
+$(".tipwrap").innerHTML = tip("reviewed");
+renderRecent($("#recent"));
+// UniProt paginates with cursors; keep a stack so "Prev" works.
+let cursors = [null], page = 0, total = 0, nextCursor = null;
+const selected = new Map();  // accession -> name, kept across pages
+
+function buildQuery() {
+  const parts = [];
+  const text = $("#q").value.trim();
+  if (text) parts.push(/\s(AND|OR|NOT)\s/.test(text) || text.includes(":") ? `(${text})` : text);
+  let org = $("#org").value;
+  if (org === "custom") org = $("#tax").value ? `taxonomy_id:${parseInt($("#tax").value, 10)}` : "";
+  if (org) parts.push(org);
+  if ($("#rev").checked) parts.push("reviewed:true");
+  const lo = $("#lmin").value, hi = $("#lmax").value;
+  if (lo || hi) parts.push(`length:[${lo ? parseInt(lo, 10) : 1} TO ${hi ? parseInt(hi, 10) : "*"}]`);
+  return parts.join(" AND ");
+}
+const refreshQ = () => { $("#qtext").textContent = buildQuery() || "–"; $("#taxwrap").style.display = $("#org").value === "custom" ? "" : "none"; };
+$$("#f input, #f select").forEach(el => el.addEventListener("input", refreshQ));
+
+const params = new URLSearchParams(location.search);
+if (params.get("q")) { $("#q").value = params.get("q"); $("#rev").checked = false; }
+refreshQ();
+
+$("#f").onsubmit = e => {
+  e.preventDefault();
+  const q = $("#q").value.trim();
+  if (ACC_RE.test(q)) { location.href = "/protein/" + q.toUpperCase(); return; }
+  cursors = [null]; page = 0; load();
+};
+$("#next").onclick = () => { if (nextCursor) { cursors[page + 1] = nextCursor; page++; load(); } };
+$("#prev").onclick = () => { if (page > 0) { page--; load(); } };
+$("#cmp").onclick = () => { const [a, b] = [...selected.keys()]; location.href = `/compare?a=${a}&b=${b}`; };
+function updateCmp() {
+  $("#cmp").textContent = `Compare selected (${selected.size}/2)`;
+  $("#cmp").disabled = selected.size !== 2;
+}
+
+async function load() {
+  const q = buildQuery(), size = +$("#size").value, btn = $("#go");
+  showMsg($("#msg"), "");
+  if (!q) return showMsg($("#msg"), "Type something to search for, or pick a filter.");
+  history.replaceState(null, "", "?q=" + encodeURIComponent(q));
+  busy(btn, true, "Searching");
+  try {
+    const u = new URLSearchParams({ q, size }); if (cursors[page]) u.set("cursor", cursors[page]);
+    const d = await api("/api/search?" + u);
+    total = d.total; nextCursor = d.next_cursor;
+    $("#res").style.display = "";
+    const start = page * size;
+    $("#info").textContent = total ? `${(start + 1).toLocaleString()}–${(start + d.results.length).toLocaleString()} of ${total.toLocaleString()} results` : "No results. Try fewer filters.";
+    $("#prev").disabled = page === 0; $("#next").disabled = !nextCursor;
+    $("#rows").innerHTML = d.results.map(r => `<tr class="click${selected.has(r.accession) ? " sel" : ""}" data-acc="${esc(r.accession)}" data-name="${esc(r.name || "")}">
+      <td><input type="checkbox" aria-label="Select ${esc(r.accession)}" ${selected.has(r.accession) ? "checked" : ""}></td>
+      <td class="mono"><a href="/protein/${esc(r.accession)}">${esc(r.accession)}</a></td><td>${esc(r.name)}</td><td>${esc(r.gene || "")}</td>
+      <td><i>${esc(r.organism || "")}</i></td><td>${r.length ?? ""}</td><td>${r.reviewed ? '<span class="pill ok">reviewed</span>' : '<span class="pill">unreviewed</span>'}</td></tr>`).join("");
+    $$("#rows tr").forEach(tr => tr.onclick = e => {
+      if (e.target.tagName === "A") return;
+      if (e.target.type === "checkbox" || e.target.cellIndex === 0 || e.target.closest("td") === tr.cells[0]) {
+        const cb = $("input", tr);
+        if (e.target !== cb) cb.checked = !cb.checked;
+        if (cb.checked) {
+          if (selected.size >= 2) { cb.checked = false; showMsg($("#msg"), "You can compare two proteins at a time. Untick one first.", "warn"); return; }
+          selected.set(tr.dataset.acc, tr.dataset.name);
+        } else selected.delete(tr.dataset.acc);
+        tr.classList.toggle("sel", cb.checked); showMsg($("#msg"), ""); updateCmp();
+        return;
+      }
+      location.href = "/protein/" + tr.dataset.acc;
+    });
+    updateCmp();
+  } catch (e) { showMsg($("#msg"), e.message); }
+  finally { busy(btn, false); }
+}
+if (params.get("q")) load();
+</script>
+{% endblock %}

@@ -1,0 +1,725 @@
+{
+  "backend": "esm2",
+  "model": "LogisticRegression(C=0.1) on 480-d ESM-2 embeddings",
+  "n_features": 480,
+  "classes": [
+    "dna_binding",
+    "ion_channel",
+    "kinase",
+    "other",
+    "protease",
+    "ribosomal_protein",
+    "toxin"
+  ],
+  "n_train": 2735,
+  "n_holdout": 663,
+  "train_counts": {
+    "other": 400,
+    "toxin": 399,
+    "dna_binding": 399,
+    "protease": 396,
+    "ion_channel": 388,
+    "kinase": 377,
+    "ribosomal_protein": 376
+  },
+  "holdout_counts": {
+    "kinase": 100,
+    "toxin": 100,
+    "dna_binding": 100,
+    "other": 100,
+    "protease": 99,
+    "ribosomal_protein": 96,
+    "ion_channel": 68
+  },
+  "holdout": {
+    "accuracy": 0.7994,
+    "balanced_accuracy": 0.8018,
+    "macro_f1": 0.8013
+  },
+  "holdout_low_similarity": {
+    "n": 346,
+    "accuracy": 0.763,
+    "balanced_accuracy": 0.7563
+  },
+  "holdout_below_30pct_identity": {
+    "n": 482,
+    "accuracy": 0.7365,
+    "balanced_accuracy": 0.7645
+  },
+  "holdout_redundancy_filtered": {
+    "n": 524,
+    "removed": 139,
+    "threshold": 40.0,
+    "candidates": 5,
+    "accuracy": 0.7576,
+    "balanced_accuracy": 0.7802,
+    "macro_f1": 0.7758,
+    "baseline_1nn": 0.3588
+  },
+  "per_class": {
+    "dna_binding": {
+      "n": 100,
+      "recall": 0.79
+    },
+    "ion_channel": {
+      "n": 68,
+      "recall": 0.8382
+    },
+    "kinase": {
+      "n": 100,
+      "recall": 0.91
+    },
+    "other": {
+      "n": 100,
+      "recall": 0.44
+    },
+    "protease": {
+      "n": 99,
+      "recall": 0.798
+    },
+    "ribosomal_protein": {
+      "n": 96,
+      "recall": 0.9062
+    },
+    "toxin": {
+      "n": 100,
+      "recall": 0.93
+    }
+  },
+  "baselines": {
+    "random forest, hand-crafted features": {
+      "accuracy": 0.5641,
+      "balanced_accuracy": 0.5757,
+      "macro_f1": 0.5525
+    },
+    "majority class": {
+      "accuracy": 0.1508,
+      "balanced_accuracy": 0.1429,
+      "macro_f1": 0.0374
+    },
+    "random (stratified)": {
+      "accuracy": 0.1388,
+      "balanced_accuracy": 0.1424,
+      "macro_f1": 0.1387
+    },
+    "logistic regression, composition only (20 AAC)": {
+      "accuracy": 0.4585,
+      "balanced_accuracy": 0.4676,
+      "macro_f1": 0.4573
+    },
+    "1-NN k-mer homology transfer": {
+      "accuracy": 0.4917,
+      "balanced_accuracy": 0.4928,
+      "macro_f1": 0.4905
+    }
+  },
+  "confusion_matrix": [
+    [
+      79,
+      2,
+      2,
+      11,
+      2,
+      2,
+      2
+    ],
+    [
+      0,
+      57,
+      0,
+      10,
+      1,
+      0,
+      0
+    ],
+    [
+      4,
+      0,
+      91,
+      5,
+      0,
+      0,
+      0
+    ],
+    [
+      24,
+      2,
+      6,
+      44,
+      12,
+      1,
+      11
+    ],
+    [
+      2,
+      1,
+      2,
+      10,
+      79,
+      0,
+      5
+    ],
+    [
+      3,
+      0,
+      0,
+      5,
+      1,
+      87,
+      0
+    ],
+    [
+      0,
+      1,
+      1,
+      4,
+      1,
+      0,
+      93
+    ]
+  ],
+  "accuracy_by_similarity": [
+    {
+      "bin": "<0.10 (dissimilar)",
+      "n": 346,
+      "accuracy": 0.763
+    },
+    {
+      "bin": "0.10-0.20",
+      "n": 240,
+      "accuracy": 0.8083
+    },
+    {
+      "bin": "0.20-0.40",
+      "n": 47,
+      "accuracy": 0.9574
+    },
+    {
+      "bin": ">=0.40 (near-homolog)",
+      "n": 30,
+      "accuracy": 0.9
+    }
+  ],
+  "accuracy_by_identity": [
+    {
+      "bin": "<30% identity",
+      "n": 482,
+      "accuracy": 0.7365
+    },
+    {
+      "bin": "30-50%",
+      "n": 84,
+      "accuracy": 0.9881
+    },
+    {
+      "bin": "50-70%",
+      "n": 45,
+      "accuracy": 0.9333
+    },
+    {
+      "bin": ">=70%",
+      "n": 52,
+      "accuracy": 0.9615
+    }
+  ],
+  "median_nn_similarity": 0.097,
+  "median_nn_identity": 10.7,
+  "top_features": [
+    {
+      "feature": "n_tm_segments",
+      "importance": 0.02781
+    },
+    {
+      "feature": "pI",
+      "importance": 0.02384
+    },
+    {
+      "feature": "aac_C",
+      "importance": 0.01977
+    },
+    {
+      "feature": "charge_per_residue",
+      "importance": 0.01825
+    },
+    {
+      "feature": "group_positive",
+      "importance": 0.01821
+    },
+    {
+      "feature": "log10_length",
+      "importance": 0.01712
+    },
+    {
+      "feature": "aromaticity",
+      "importance": 0.0129
+    },
+    {
+      "feature": "gravy",
+      "importance": 0.01274
+    },
+    {
+      "feature": "aac_R",
+      "importance": 0.01053
+    },
+    {
+      "feature": "group_hydrophobic",
+      "importance": 0.00994
+    },
+    {
+      "feature": "aac_F",
+      "importance": 0.00874
+    },
+    {
+      "feature": "dpc_CC",
+      "importance": 0.00818
+    },
+    {
+      "feature": "aac_L",
+      "importance": 0.00815
+    },
+    {
+      "feature": "aac_K",
+      "importance": 0.00806
+    },
+    {
+      "feature": "group_aromatic",
+      "importance": 0.00771
+    },
+    {
+      "feature": "group_polar",
+      "importance": 0.00748
+    },
+    {
+      "feature": "aac_W",
+      "importance": 0.00727
+    },
+    {
+      "feature": "group_aliphatic",
+      "importance": 0.0072
+    },
+    {
+      "feature": "group_negative",
+      "importance": 0.00673
+    },
+    {
+      "feature": "aac_V",
+      "importance": 0.00552
+    },
+    {
+      "feature": "dpc_CY",
+      "importance": 0.0054
+    },
+    {
+      "feature": "dpc_LL",
+      "importance": 0.00518
+    },
+    {
+      "feature": "aac_D",
+      "importance": 0.00514
+    },
+    {
+      "feature": "dpc_FL",
+      "importance": 0.00507
+    },
+    {
+      "feature": "dpc_GC",
+      "importance": 0.00505
+    }
+  ],
+  "mean_confidence": 0.849,
+  "trained": "2026-10-24T21:31:18",
+  "dataset": {
+    "cutoff": "2018-12-31",
+    "per_class": 400,
+    "holdout": 100,
+    "classes": {
+      "kinase": "KW-0418",
+      "protease": "KW-0645",
+      "ion_channel": "KW-0407",
+      "ribosomal_protein": "KW-0689",
+      "toxin": "KW-0800",
+      "dna_binding": "KW-0238",
+      "other": null
+    },
+    "base_filter": "reviewed:true AND fragment:false AND length:[50 TO 2000]",
+    "built": "2026-10-24T21:16:34",
+    "sampling": "proportional across taxonomic groups (bacteria, archaea, viruses, fungi, plants, mammals, other_animals, other_eukaryotes)",
+    "human_fraction": {
+      "dna_binding": 0.102,
+      "ion_channel": 0.197,
+      "kinase": 0.078,
+      "other": 0.094,
+      "protease": 0.145,
+      "ribosomal_protein": 0.017,
+      "toxin": 0.0
+    },
+    "counts": {
+      "dna_binding": {
+        "holdout": 100,
+        "train": 399
+      },
+      "ion_channel": {
+        "holdout": 68,
+        "train": 388
+      },
+      "kinase": {
+        "holdout": 100,
+        "train": 377
+      },
+      "other": {
+        "holdout": 100,
+        "train": 400
+      },
+      "protease": {
+        "holdout": 99,
+        "train": 396
+      },
+      "ribosomal_protein": {
+        "holdout": 96,
+        "train": 376
+      },
+      "toxin": {
+        "holdout": 100,
+        "train": 399
+      }
+    },
+    "availability": {
+      "kinase": {
+        "keyword": "KW-0418",
+        "train_strata_available": {
+          "bacteria": 14151,
+          "archaea": 801,
+          "viruses": 212,
+          "fungi": 895,
+          "plants": 1358,
+          "mammals": 1930,
+          "other_animals": 824,
+          "other_eukaryotes": 387
+        },
+        "train": 400,
+        "train_available": 20561,
+        "holdout_strata_available": {
+          "bacteria": 100,
+          "archaea": 14,
+          "viruses": 11,
+          "fungi": 78,
+          "plants": 61,
+          "mammals": 16,
+          "other_animals": 50,
+          "other_eukaryotes": 39
+        },
+        "holdout": 100,
+        "holdout_available": 369
+      },
+      "protease": {
+        "keyword": "KW-0645",
+        "train_strata_available": {
+          "bacteria": 5175,
+          "archaea": 284,
+          "viruses": 275,
+          "fungi": 1561,
+          "plants": 570,
+          "mammals": 1783,
+          "other_animals": 661,
+          "other_eukaryotes": 125
+        },
+        "train": 400,
+        "train_available": 10437,
+        "holdout_strata_available": {
+          "bacteria": 80,
+          "archaea": 6,
+          "viruses": 21,
+          "fungi": 55,
+          "plants": 32,
+          "mammals": 20,
+          "other_animals": 67,
+          "other_eukaryotes": 56
+        },
+        "holdout": 100,
+        "holdout_available": 337
+      },
+      "ion_channel": {
+        "keyword": "KW-0407",
+        "train_strata_available": {
+          "bacteria": 974,
+          "archaea": 38,
+          "viruses": 238,
+          "fungi": 23,
+          "plants": 150,
+          "mammals": 1107,
+          "other_animals": 351,
+          "other_eukaryotes": 13
+        },
+        "train": 400,
+        "train_available": 2894,
+        "holdout_strata_available": {
+          "bacteria": 3,
+          "archaea": 0,
+          "viruses": 2,
+          "fungi": 10,
+          "plants": 1,
+          "mammals": 23,
+          "other_animals": 26,
+          "other_eukaryotes": 4
+        },
+        "holdout": 69,
+        "holdout_available": 69
+      },
+      "ribosomal_protein": {
+        "keyword": "KW-0689",
+        "train_strata_available": {
+          "bacteria": 38106,
+          "archaea": 2755,
+          "viruses": 0,
+          "fungi": 919,
+          "plants": 2862,
+          "mammals": 787,
+          "other_animals": 747,
+          "other_eukaryotes": 904
+        },
+        "train": 400,
+        "train_available": 47083,
+        "holdout_strata_available": {
+          "bacteria": 5,
+          "archaea": 66,
+          "viruses": 0,
+          "fungi": 134,
+          "plants": 2,
+          "mammals": 78,
+          "other_animals": 1,
+          "other_eukaryotes": 0
+        },
+        "holdout": 100,
+        "holdout_available": 286
+      },
+      "toxin": {
+        "keyword": "KW-0800",
+        "train_strata_available": {
+          "bacteria": 350,
+          "archaea": 1,
+          "viruses": 14,
+          "fungi": 15,
+          "plants": 104,
+          "mammals": 4,
+          "other_animals": 3695,
+          "other_eukaryotes": 0
+        },
+        "train": 400,
+        "train_available": 4183,
+        "holdout_strata_available": {
+          "bacteria": 41,
+          "archaea": 0,
+          "viruses": 0,
+          "fungi": 18,
+          "plants": 11,
+          "mammals": 0,
+          "other_animals": 791,
+          "other_eukaryotes": 0
+        },
+        "holdout": 100,
+        "holdout_available": 861
+      },
+      "dna_binding": {
+        "keyword": "KW-0238",
+        "train_strata_available": {
+          "bacteria": 18073,
+          "archaea": 1044,
+          "viruses": 1509,
+          "fungi": 1680,
+          "plants": 2764,
+          "mammals": 5287,
+          "other_animals": 2619,
+          "other_eukaryotes": 300
+        },
+        "train": 400,
+        "train_available": 33285,
+        "holdout_strata_available": {
+          "bacteria": 236,
+          "archaea": 46,
+          "viruses": 61,
+          "fungi": 262,
+          "plants": 99,
+          "mammals": 47,
+          "other_animals": 188,
+          "other_eukaryotes": 25
+        },
+        "holdout": 100,
+        "holdout_available": 964
+      },
+      "other": {
+        "keyword": null,
+        "train_strata_available": {
+          "bacteria": 252213,
+          "archaea": 14432,
+          "viruses": 13074,
+          "fungi": 27656,
+          "plants": 27845,
+          "mammals": 53305,
+          "other_animals": 23409,
+          "other_eukaryotes": 6249
+        },
+        "train": 400,
+        "train_available": 418317,
+        "holdout_strata_available": {
+          "bacteria": 3023,
+          "archaea": 238,
+          "viruses": 678,
+          "fungi": 3780,
+          "plants": 2069,
+          "mammals": 880,
+          "other_animals": 1616,
+          "other_eukaryotes": 851
+        },
+        "holdout": 100,
+        "holdout_available": 13144
+      }
+    },
+    "warnings": [
+      "ion_channel: only 69 holdout entries available (wanted 100).",
+      "Removed 71 duplicate accessions/sequences."
+    ],
+    "n_total": 3398
+  },
+  "figures": [
+    "confusion_matrix_esm2.png",
+    "accuracy_by_similarity_esm2.png",
+    "feature_importance_esm2.png",
+    "pca_map_esm2.png",
+    "property_boxplots.png"
+  ],
+  "patterns": {
+    "dna_binding": {
+      "n": 499,
+      "median_length": 389.0,
+      "mean_gravy": -0.423,
+      "mean_pI": 7.4,
+      "mean_charge_per_100": 0.58,
+      "mean_aromaticity": 0.07,
+      "frac_with_tm": 0.122,
+      "enriched": [
+        "Q (+0.9%)",
+        "E (+0.9%)",
+        "R (+0.7%)"
+      ],
+      "depleted": [
+        "C (-0.9%)",
+        "V (-0.9%)",
+        "G (-1.0%)"
+      ]
+    },
+    "ion_channel": {
+      "n": 456,
+      "median_length": 444.0,
+      "mean_gravy": 0.144,
+      "mean_pI": 7.52,
+      "mean_charge_per_100": 0.33,
+      "mean_aromaticity": 0.104,
+      "frac_with_tm": 0.967,
+      "enriched": [
+        "L (+2.4%)",
+        "F (+1.9%)",
+        "I (+1.2%)"
+      ],
+      "depleted": [
+        "R (-0.8%)",
+        "D (-1.0%)",
+        "K (-1.9%)"
+      ]
+    },
+    "kinase": {
+      "n": 477,
+      "median_length": 476.0,
+      "mean_gravy": -0.221,
+      "mean_pI": 6.59,
+      "mean_charge_per_100": -0.78,
+      "mean_aromaticity": 0.069,
+      "frac_with_tm": 0.279,
+      "enriched": [
+        "L (+0.8%)",
+        "E (+0.7%)",
+        "D (+0.7%)"
+      ],
+      "depleted": [
+        "Y (-0.4%)",
+        "K (-0.9%)",
+        "C (-1.0%)"
+      ]
+    },
+    "other": {
+      "n": 500,
+      "median_length": 391.0,
+      "mean_gravy": -0.214,
+      "mean_pI": 6.65,
+      "mean_charge_per_100": -0.91,
+      "mean_aromaticity": 0.083,
+      "frac_with_tm": 0.312,
+      "enriched": [
+        "A (+0.6%)",
+        "D (+0.5%)",
+        "Q (+0.4%)"
+      ],
+      "depleted": [
+        "R (-0.7%)",
+        "C (-0.8%)",
+        "K (-0.9%)"
+      ]
+    },
+    "protease": {
+      "n": 495,
+      "median_length": 506.0,
+      "mean_gravy": -0.281,
+      "mean_pI": 6.75,
+      "mean_charge_per_100": -0.6,
+      "mean_aromaticity": 0.087,
+      "frac_with_tm": 0.535,
+      "enriched": [
+        "S (+0.7%)",
+        "N (+0.6%)",
+        "D (+0.5%)"
+      ],
+      "depleted": [
+        "K (-0.7%)",
+        "C (-0.8%)",
+        "R (-1.1%)"
+      ]
+    },
+    "ribosomal_protein": {
+      "n": 472,
+      "median_length": 165.0,
+      "mean_gravy": -0.491,
+      "mean_pI": 10.57,
+      "mean_charge_per_100": 9.91,
+      "mean_aromaticity": 0.052,
+      "frac_with_tm": 0.028,
+      "enriched": [
+        "K (+3.5%)",
+        "R (+3.1%)",
+        "V (+2.0%)"
+      ],
+      "depleted": [
+        "D (-1.4%)",
+        "F (-1.5%)",
+        "L (-2.2%)"
+      ]
+    },
+    "toxin": {
+      "n": 499,
+      "median_length": 113.0,
+      "mean_gravy": -0.208,
+      "mean_pI": 7.34,
+      "mean_charge_per_100": 1.78,
+      "mean_aromaticity": 0.096,
+      "frac_with_tm": 0.707,
+      "enriched": [
+        "C (+5.0%)",
+        "K (+1.2%)",
+        "Y (+1.1%)"
+      ],
+      "depleted": [
+        "A (-1.2%)",
+        "L (-1.2%)",
+        "R (-1.2%)"
+      ]
+    }
+  }
+}

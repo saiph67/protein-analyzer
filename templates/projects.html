@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Projects · Protein Analyzer{% endblock %}
+{% block content %}
+<h1>Projects</h1>
+<p class="sub">Collect proteins and results with your own notes, then export everything as one report.
+  Use <b>Save to project</b> on any results page. Projects are stored on this computer in the app's <code>userdata</code> folder.</p>
+{% if public %}<div class="msg warn">Projects are turned off on this shared server.</div>{% else %}
+<div id="msg"></div>
+<div class="projgrid">
+  <div class="card">
+    <h2>Your projects</h2>
+    <div class="row"><input type="text" id="newname" placeholder="New project name" class="grow" style="flex:1 1 140px"><button id="create">Create</button></div>
+    <div id="list" style="margin-top:10px"></div>
+    <hr style="border:0; border-top:1px solid var(--border); margin:14px 0 10px">
+    <p class="small muted" style="margin:0 0 8px">Move your work to another computer, or keep a safe copy:</p>
+    <div class="row">
+      <a class="btn secondary" href="/api/projects/backup" title="Download every project as one file">Back up all</a>
+      <label class="btn secondary" title="Import a project or backup file exported from this app">Import…<input type="file" id="importfile" accept=".json,application/json" hidden></label>
+    </div>
+  </div>
+  <div id="detail"><div class="card empty"><div class="big">🗂️</div><h3>Pick or create a project</h3>
+    <p class="small">Projects keep proteins, comparisons, mutations and predictions together with your notes. Look for the
+      <b>Save to project</b> button on any results page.</p></div></div>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+{% if not public %}
+<script>
+const KIND_ICON = { protein: "🧬", sequence: "🔤", analysis: "📊", comparison: "⇄", alignment: "🌳", classification: "🏷", mutation: "✳", blast: "🔎", superposition: "🧊", note: "📝" };
+const when = t => new Date(t * 1000).toLocaleString();
+let current = location.hash.slice(1) || null;
+
+async function loadList() {
+  const { projects } = await api("/api/projects");
+  $("#list").innerHTML = projects.length ? projects.map(p => `<div class="row click" style="justify-content:space-between; padding:6px 8px; border-radius:8px; cursor:pointer; ${p.id === current ? "background:var(--accent-soft)" : ""}" data-id="${p.id}">
+      <span>${esc(p.name)}</span><span class="muted small">${p.n_items}</span></div>`).join("") : '<p class="muted small">No projects yet. Name one above, or press <b>Save to project</b> on any result to create one.</p>';
+  $$("#list [data-id]").forEach(el => el.onclick = () => open(el.dataset.id));
+  if (!current && projects.length) open(projects[0].id);
+}
+
+async function open(id) {
+  current = id; history.replaceState(null, "", "#" + id);
+  try {
+    const p = await api("/api/projects/" + id);
+    $$("#list [data-id]").forEach(el => el.style.background = el.dataset.id === id ? "var(--accent-soft)" : "");
+    $("#detail").innerHTML = `<div class="card">
+      <div class="row" style="justify-content:space-between">
+        <input type="text" id="pname" value="${esc(p.name)}" style="font-size:1.2rem; font-weight:600; max-width:420px" aria-label="Project name">
+        <span class="row"><a class="btn secondary" href="/projects/${p.id}/report" target="_blank">Report / PDF</a>
+          <a class="btn secondary" href="/api/projects/${p.id}/export.md">Markdown</a><a class="btn secondary" href="/api/projects/${p.id}/export.json">JSON</a>
+          <button class="danger" id="delp">Delete</button></span></div>
+      <p class="muted small">Created ${when(p.created)} · ${p.items.length} item(s)</p>
+      <label class="field">Project notes <textarea id="pnotes" style="min-height:90px; font-family:inherit" placeholder="Aims, observations, conclusions…">${esc(p.notes)}</textarea></label>
+      <div class="row" style="margin-top:6px"><button class="secondary" id="savep">Save notes</button><span id="saved" class="muted small"></span>
+        <button class="secondary" id="addnote">+ Add a note item</button></div></div>
+      ${p.items.length ? p.items.map(it => itemCard(it)).join("") : '<div class="card muted">Nothing saved yet. Use <b>Save to project</b> on the Analyze, protein, Compare, Mutations, Classify or BLAST pages.</div>'}`;
+    $("#savep").onclick = async () => { await api("/api/projects/" + id, { method: "PATCH", json: { name: $("#pname").value, notes: $("#pnotes").value } }); $("#saved").textContent = "saved ✓"; loadList(); };
+    $("#pname").onchange = $("#savep").onclick;
+    $("#delp").onclick = async () => { if (confirm(`Delete project "${p.name}" and its ${p.items.length} item(s)? This can't be undone.`)) { await api("/api/projects/" + id, { method: "DELETE" }); current = null; history.replaceState(null, "", "#"); $("#detail").innerHTML = ""; loadList(); } };
+    $("#addnote").onclick = async () => { const t = prompt("Note title"); if (t) { await api(`/api/projects/${id}/items`, { json: { kind: "note", title: t, data: {} } }); open(id); loadList(); } };
+    $$(".item").forEach(el => {
+      const iid = el.dataset.id;
+      $(".inote", el).onchange = async () => { await api(`/api/projects/${id}/items/${iid}`, { method: "PATCH", json: { note: $(".inote", el).value } }); $(".isaved", el).textContent = "saved ✓"; };
+      $(".idel", el).onclick = async () => { if (confirm("Remove this item?")) { await api(`/api/projects/${id}/items/${iid}`, { method: "DELETE" }); open(id); loadList(); } };
+    });
+  } catch (e) { $("#detail").innerHTML = `<div class="card"><div class="msg error">${esc(e.message)}</div></div>`; }
+}
+
+function itemCard(it) {
+  return `<div class="card item" data-id="${it.id}"><div class="row" style="justify-content:space-between">
+    <h3 style="margin:0">${KIND_ICON[it.kind] || "•"} ${esc(it.title)} <span class="muted small" style="font-weight:400">${it.kind} · ${when(it.added)}</span></h3>
+    <button class="secondary idel" title="Remove">✕</button></div>
+    ${summary(it)}
+    <label class="field" style="margin-top:6px">Your note <textarea class="inote" style="min-height:50px; font-family:inherit">${esc(it.note)}</textarea></label><span class="muted small isaved"></span></div>`;
+}
+
+function summary(it) {
+  const d = it.data || {};
+  const link = acc => acc ? `<a class="mono" href="/protein/${esc(acc)}">${esc(acc)}</a>` : "";
+  switch (it.kind) {
+    case "protein": case "analysis": {
+      const a = d.analysis || d;
+      return `<p class="small">${link(d.accession)} ${esc(d.organism || "")}${a.length ? ` · ${a.length} aa · ${fmt(a.molecular_weight / 1000, 1)} kDa · GRAVY ${fmt(a.gravy, 3)} · pI ${fmt(a.isoelectric_point, 2)} · TM ${a.n_tm_segments}` : ""}</p>`;
+    }
+    case "comparison": return `<p class="small">${esc(d.name_a)} vs ${esc(d.name_b)} (${esc(d.mode)}): <b>${d.identity}% identity</b>, ${d.similarity}% similarity, score ${d.score}</p>`;
+    case "mutation": return `<p class="small">${link(d.accession)} <b>${esc(d.mutation)}</b>: ${esc(d.from_name)} → ${esc(d.to_name)} · BLOSUM62 ${d.blosum62}${d.alphamissense != null ? ` · AlphaMissense ${d.alphamissense.toFixed(2)} (${esc(d.alphamissense_class)})` : ""}${d.accession ? ` · <a href="/mutate?acc=${esc(d.accession)}&m=${esc(d.mutation)}">reopen</a>` : ""}</p>`;
+    case "classification": return `<ul class="small">${(d.predictions || []).slice(0, 10).map(r => `<li>${esc(r.name)}: <b>${esc(r.prediction)}</b> (${pct(r.confidence, 0)})${r.reliable ? "" : " ⚠ unreliable"}</li>`).join("")}</ul>`;
+    case "alignment": return `<p class="small">${(d.names || []).map(esc).join(", ")} · <a href="/align?accs=${encodeURIComponent((d.names || []).map(n => n.split(" ")[0]).filter(a => ACC_RE.test(a)).join(" "))}">reopen</a></p><p class="mono small" style="overflow-wrap:anywhere">${esc(d.newick || "")}</p>`;
+    case "superposition": return `<p class="small">${esc(d.name_a)} vs ${esc(d.name_b)}: <b>TM-score ${fmt(d.tm_score, 2)}</b>, core RMSD ${d.rmsd_core ?? "–"} Å, ${d.sequence_identity}% sequence identity · <a href="/structures?a=${esc(d.accession_a)}&b=${esc(d.accession_b)}">reopen</a></p>`;
+    case "blast": return `<ul class="small">${(d.hits || []).slice(0, 8).map(h => `<li>${link(h.accession)} ${esc(h.name || "")}: ${h.identity}% identity, E=${esc(h.evalue)}</li>`).join("")}</ul>`;
+    default: return "";
+  }
+}
+
+$("#importfile").onchange = async () => {
+  const f = $("#importfile").files[0]; if (!f) return;
+  showMsg($("#msg"), "");
+  try {
+    if (f.size > 20 * 1024 * 1024) throw new Error("That file is too large (over 20 MB).");
+    let payload; try { payload = JSON.parse(await f.text()); } catch (e) { throw new Error("That file isn't valid JSON. Choose a project or backup file exported from this app."); }
+    const r = await api("/api/projects/import", { json: payload });
+    toast(`Imported ${r.created.length} project(s): ${r.created.map(c => esc(c.name)).join(", ")}`);
+    current = r.created[0]?.id || current; await loadList(); if (current) open(current);
+  } catch (e) { showMsg($("#msg"), e.message); window.scrollTo(0, 0); }
+  $("#importfile").value = "";
+};
+$("#create").onclick = async () => {
+  try { const p = await api("/api/projects", { json: { name: $("#newname").value } }); $("#newname").value = ""; current = p.id; await loadList(); open(p.id); }
+  catch (e) { showMsg($("#msg"), e.message); }
+};
+$("#newname").onkeydown = e => { if (e.key === "Enter") $("#create").click(); };
+loadList().then(() => { if (current) open(current); }).catch(e => showMsg($("#msg"), e.message));
+</script>
+{% endif %}
+{% endblock %}

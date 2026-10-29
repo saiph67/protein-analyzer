@@ -1,0 +1,10 @@
+.cache/
+userdata/
+build/
+dist/
+tests/
+__pycache__/
+*.pyc
+results/esm_cache_*.joblib
+results/model_esm2.joblib
+results/jobs.json

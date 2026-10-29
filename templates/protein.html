@@ -1,0 +1,304 @@
+{% extends "base.html" %}
+{% block kind %}protein{% endblock %}
+{% block title %}{{ accession }} · Protein Analyzer{% endblock %}
+{% block head %}<script src="{{ url_for('static', filename='vendor/3Dmol-min.js') }}" defer></script>{% endblock %}
+{% block content %}
+<div id="msg"><div class="msg info"><span class="spinner"></span> Loading {{ accession }} from UniProt…</div></div>
+<div id="out"></div>
+{% endblock %}
+{% block scripts %}
+<script>
+const ACC = {{ accession | tojson }};
+const GO_NAMES = { F: "Molecular function", P: "Biological process", C: "Cellular component" };
+const PLDDT = [[90, "#0053d6", "very high (>90)"], [70, "#65cbf3", "confident (70–90)"], [50, "#ffdb13", "low (50–70)"], [0, "#ff7d45", "very low (<50)"]];
+const plddtColor = b => PLDDT.find(([t]) => b > t || t === 0)[1];
+let entry, analysisCtl, viewer = null, structure = null, colorMode = "plddt", spinning = false, surface = null, featItems = [];
+
+(async () => {
+  try {
+    entry = await api("/api/protein/" + encodeURIComponent(ACC));
+    showMsg($("#msg"), "");
+    addRecent(entry.accession, entry.name);
+    render(entry);
+  } catch (err) { showMsg($("#msg"), err.message); }
+})();
+
+function render(e) {
+  document.title = `${e.accession} ${e.name || ""} · Protein Analyzer`;
+  const go = Object.entries(e.go).map(([k, terms]) => `<div><h3>${GO_NAMES[k]} (${terms.length})</h3>${terms.length ?
+    terms.map(t => `<span class="pill" title="${esc(t.id)} ${esc(t.evidence || "")}">${esc(t.term)}</span>`).join("") : '<span class="muted">none</span>'}</div>`).join("");
+  const tracks = featureTracks(e.length, e.features, e.analysis ? e.analysis.tm_segments : []);
+  featItems = tracks.items;
+  const uniTm = e.features.filter(f => f.type === "Transmembrane").length, predTm = e.analysis ? e.analysis.n_tm_segments : 0;
+  const sig = e.features.find(f => f.type === "Signal");
+  const tmNote = `UniProt annotates <b>${uniTm}</b> transmembrane segment(s); this app's simple predictor finds <b>${predTm}</b>.` +
+    (sig && predTm && e.analysis.tm_segments.some(([a]) => a <= sig.end + 5) ? " The first predicted segment overlaps the signal peptide, which is a classic false positive." : "");
+  const A = encodeURIComponent(e.accession);
+  $("#out").innerHTML = `
+  <nav class="secnav noprint" aria-label="Sections">
+    <a href="#sec-overview">Overview</a><a href="#structcard">3D structure</a><a href="#sec-ppi">Interactions</a><a href="#sec-path">Pathways</a>
+    <a href="#sec-annot">Annotations</a><a href="#sec-domains">Domains</a><a href="#sec-seq">Sequence &amp; properties</a></nav>
+  <div class="card" id="sec-overview" style="overflow:visible">
+    <div class="row" style="justify-content:space-between; align-items:flex-start">
+      <div style="flex:1 1 420px"><h1>${esc(e.name || e.accession)}</h1>
+        <p class="sub"><span class="mono">${esc(e.accession)}</span> · ${esc(e.id || "")} · gene <b>${esc(e.gene || "–")}</b> ·
+        <i>${esc(e.organism || "")}</i> (taxon ${esc(e.organism_id ?? "")}) · ${e.reviewed ? '<span class="pill ok">Swiss-Prot reviewed</span>' : '<span class="pill">TrEMBL unreviewed</span>'}${tip("reviewed")}
+        · first published ${esc(e.date_created || "?")}</p></div>
+      <div class="actions noprint">
+        ${window.PA_PUBLIC ? "" : `<button type="button" class="save-btn">Save to project</button>`}
+        <a class="btn secondary" href="/mutate?acc=${A}">Mutations</a>
+        <a class="btn secondary" href="/compare?a=${A}">Compare</a>
+        <div class="menu"><button type="button" class="secondary" aria-haspopup="true" aria-expanded="false">More ▾</button>
+          <div class="menu-list" role="menu">
+            <a role="menuitem" href="/classify?acc=${A}">Predict function (classify)</a>
+            <a role="menuitem" href="/blast?q=${A}">Find similar sequences (BLAST)</a>
+            <a role="menuitem" href="/structures?a=${A}">Overlay 3D with another protein</a>
+            <a role="menuitem" href="/lab?prot=${A}#digest">Digest / peptide masses</a>
+            <a role="menuitem" href="/api/protein/${A}/fasta">Download FASTA</a>
+            <button role="menuitem" type="button" onclick="print()">Print / save as PDF</button>
+            <a role="menuitem" href="${esc(e.url)}" target="_blank" rel="noopener">Open on uniprot.org ↗</a>
+          </div></div>
+      </div>
+    </div>
+    <h3>Function</h3>
+    ${e.function.length ? e.function.map(t => `<p>${esc(t)}</p>`).join("") : '<p class="muted">No function annotation in UniProt.</p>'}
+    <div class="grid2">
+      <div><h3>EC numbers${tip("ec")}</h3>${e.ec.length ? e.ec.map(x => `<span class="pill">EC ${esc(x)}</span>`).join("") : '<span class="muted">none (not an enzyme, or not annotated)</span>'}</div>
+      <div><h3>Keywords${tip("keyword")}</h3>${e.keywords.map(k => `<span class="pill" title="${esc(k.id)} · ${esc(k.category)}">${esc(k.name)}</span>`).join("") || '<span class="muted">none</span>'}</div>
+    </div>
+    <h2 style="margin-top:16px">Gene Ontology${tip("go")}</h2>
+    <div class="grid2">${go}</div>
+  </div>
+
+  <div class="card noprint" id="structcard">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">3D structure (AlphaFold prediction)${tip("plddt")}</h2>
+      <div class="row">
+        <button class="secondary" id="color">Colour: confidence</button>
+        <button class="secondary" id="surf">Surface</button>
+        <button class="secondary" id="spin">Spin</button>
+        <button class="secondary" id="reset">Reset view</button>
+      </div>
+    </div>
+    <p class="muted small" id="structinfo" style="margin:6px 0"><span class="spinner"></span> Loading predicted structure…</p>
+    <div class="viewer" id="viewer" aria-label="3D structure viewer: drag to rotate, scroll to zoom"></div>
+    <div class="plddt small" style="margin-top:6px" id="legend">${PLDDT.map(([, c, l]) => `<span style="background:${c}">${l}</span>`).join("")}
+      <span class="muted">· drag to rotate, scroll/pinch to zoom; click an annotation below to highlight it</span></div>
+    <h3>Secondary structure &amp; disorder${tip("ss")}</h3>
+    <div id="sstrack" class="small muted">Calculated once the structure loads…</div>
+    <p class="small"><a href="/structures?a=${encodeURIComponent(e.accession)}">Overlay this structure with another protein →</a></p>
+  </div>
+
+  <div class="card" id="sec-ppi">
+    <h2>Interaction partners (STRING)${tip("string")}</h2>
+    <div id="ppi"><span class="spinner"></span> Loading from STRING…</div>
+  </div>
+
+  <div class="card" id="sec-path">
+    <h2>Pathways (Reactome)${tip("reactome")}</h2>
+    <div id="pathways"><span class="spinner"></span> Loading from Reactome…</div>
+  </div>
+
+  <div class="card" id="sec-annot">
+    <h2>Annotations vs. prediction${tip("features")}</h2>
+    <p class="muted small">${tmNote}${tip("signal")}</p>
+    ${e.features.length || predTm ? tracks.html : '<p class="muted">UniProt lists no region annotations for this entry.</p>'}
+    ${featItems.length ? `<details><summary>Annotation table (${featItems.length})</summary><div class="table-wrap"><table><thead><tr><th>Type</th><th>Position</th><th>Description</th></tr></thead><tbody>
+      ${featItems.map((f, i) => `<tr class="click" data-i="${i}"><td>${esc(f.type)}</td><td>${f.start}–${f.end}</td><td>${esc(f.desc)}</td></tr>`).join("")}
+    </tbody></table></div></details>` : ""}
+    <p id="selinfo" class="small" style="min-height:1.5em; margin:6px 0 0"></p>
+  </div>
+
+  <div class="card" id="sec-domains">
+    <h2>Protein families &amp; domains (Pfam via InterPro)${tip("pfam")}</h2>
+    <div id="pfam"><span class="spinner"></span> Loading from InterPro…</div>
+  </div>
+
+  <div class="card" id="sec-seq"><h2>Sequence analysis</h2><div id="analysis"></div></div>`;
+
+  if (e.analysis) analysisCtl = mountAnalysis($("#analysis"), e.analysis, { onHighlight: (a, b) => highlight3d(a, b) });
+  else $("#analysis").textContent = "No sequence.";
+  const select = i => {
+    const f = featItems[i]; if (!f) return;
+    $$("svg.tracks .feat").forEach(x => x.classList.toggle("on", +x.dataset.i === i));
+    $("#selinfo").innerHTML = `Selected: <b>${esc(f.label)}</b> <button class="pill" id="clearsel">clear</button>`;
+    $("#clearsel").onclick = () => { $("#selinfo").innerHTML = ""; $$("svg.tracks .feat").forEach(x => x.classList.remove("on")); highlight3d(null); };
+    analysisCtl && analysisCtl.highlight(f.start, f.end);
+  };
+  $("svg.tracks")?.addEventListener("click", ev => { const r = ev.target.closest(".feat"); if (r) select(+r.dataset.i); });
+  $$("tr[data-i]").forEach(tr => tr.onclick = () => select(+tr.dataset.i));
+  const sb = $("#out .save-btn");
+  if (sb) sb.onclick = () => saveToProject("protein", `${e.accession} ${e.name || ""}`, {
+    accession: e.accession, name: e.name, organism: e.organism, gene: e.gene, function: e.function, ec: e.ec,
+    analysis: Object.fromEntries(Object.entries(e.analysis || {}).filter(([k]) => k !== "hydropathy_profile")) });
+  const links = $$(".secnav a");
+  const io = new IntersectionObserver(ents => ents.forEach(en => { if (en.isIntersecting) links.forEach(a => a.classList.toggle("on", a.getAttribute("href") === "#" + en.target.id)); }), { rootMargin: "-45% 0px -50% 0px" });
+  links.forEach(a => { const t = document.querySelector(a.getAttribute("href")); if (t) io.observe(t); });
+  loadStructure(e.accession);
+  loadPfam(e);
+  loadInteractions(e);
+  loadPathways(e);
+}
+
+let SF = null;  // structure features (secondary structure etc.)
+async function loadSS(acc) {
+  try {
+    SF = await api(`/api/protein/${encodeURIComponent(acc)}/structure-features`);
+    const n = SF.secondary_structure.length, W = 760, X = i => 8 + (W - 16) * i / n, f0 = SF.first_residue;
+    const bar = (segs, y, h, col, label) => segs.map(([a, b]) => `<rect class="feat" data-a="${a}" data-b="${b}" x="${X(a - f0)}" y="${y}" width="${Math.max(X(b - f0 + 1) - X(a - f0), 1.5)}" height="${h}" rx="2" fill="${col}"><title>${label} ${a}–${b} (click to highlight)</title></rect>`).join("");
+    let svg = `<svg class="tracks" viewBox="0 0 ${W} 40" role="img" aria-label="Secondary structure"><rect class="lane" x="8" y="12" width="${W - 16}" height="4"/>`
+      + bar(SF.helices, 4, 20, "#ef4444", "α-helix") + bar(SF.strands, 7, 14, "#f59e0b", "β-strand") + bar(SF.disordered, 28, 5, "#94a3b8", "disordered");
+    for (const t of niceTicks(1, n, 6)) svg += `<text x="${X(t - 1)}" y="40" text-anchor="middle">${Math.round(t) + f0 - 1}</text>`;
+    $("#sstrack").classList.remove("muted");
+    $("#sstrack").innerHTML = svg + `</svg><p class="small"><span style="color:#ef4444">■</span> helix ${SF.helix_percent}% · <span style="color:#f59e0b">■</span> strand ${SF.strand_percent}% ·
+      coil ${SF.coil_percent}% · <span style="color:#94a3b8">■</span> disordered ${SF.disordered_percent}%${tip("disorder")} <span class="muted">(${esc(SF.method)})</span></p>`;
+    $("#sstrack svg").addEventListener("click", ev => { const r = ev.target.closest(".feat"); if (r) analysisCtl && analysisCtl.highlight(+r.dataset.a, +r.dataset.b); });
+  } catch (err) { $("#sstrack").textContent = err.message; }
+}
+
+async function loadInteractions(e) {
+  try {
+    const d = await api(`/api/protein/${encodeURIComponent(e.accession)}/interactions?limit=15`);
+    if (d.nodes.length < 2) { $("#ppi").innerHTML = `<p class="muted">STRING lists no partners above medium confidence.</p>`; return; }
+    $("#ppi").innerHTML = `<p class="muted small">${esc(d.query)} and its ${d.nodes.length - 1} strongest partners in <i>${esc(d.organism || "")}</i>. Thicker lines = higher confidence. Drag nodes to rearrange; click a partner to look it up.
+      <a href="${esc(d.url)}" target="_blank" rel="noopener">Open in STRING ↗</a></p>${networkSvg(d)}
+      <div class="table-wrap"><table class="small"><thead><tr><th>Partner</th><th>Score with ${esc(d.query)}</th><th>Main evidence</th></tr></thead><tbody>
+      ${d.nodes.filter(n => !n.is_query).sort((a, b) => b.score - a.score).map(n => {
+        const edge = d.edges.find(x => (x.a === n.id || x.b === n.id) && (d.nodes.find(q => q.is_query).id === x.a || d.nodes.find(q => q.is_query).id === x.b));
+        const ev = edge ? Object.entries(edge.evidence).filter(([, v]) => v >= 0.3).sort((a, b) => b[1] - a[1]).map(([k]) => k).join(", ") || "combined weak evidence" : "";
+        return `<tr><td><a href="${partnerLink(n.name, d.taxon)}">${esc(n.name)}</a></td><td>${n.score?.toFixed(3) ?? ""}</td><td>${esc(ev)}</td></tr>`; }).join("")}
+      </tbody></table></div>`;
+    wireNetwork(d);
+  } catch (err) { $("#ppi").innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+}
+const partnerLink = (gene, taxon) => "/search?q=" + encodeURIComponent(`gene_exact:${gene} AND taxonomy_id:${taxon}`);
+
+function networkSvg(d) {
+  const W = 760, H = 380, N = d.nodes.length, idx = Object.fromEntries(d.nodes.map((n, i) => [n.id, i]));
+  // force-directed layout (Fruchterman-Reingold), query pinned in the centre
+  const pos = d.nodes.map((n, i) => n.is_query ? [W / 2, H / 2] : [W / 2 + 150 * Math.cos(2 * Math.PI * i / N), H / 2 + 130 * Math.sin(2 * Math.PI * i / N)]);
+  const k = Math.sqrt(W * H / N) * 0.6;
+  for (let it = 0; it < 300; it++) {
+    const disp = pos.map(() => [0, 0]), temp = 30 * (1 - it / 300) + 1;
+    for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+      const dx = pos[i][0] - pos[j][0], dy = pos[i][1] - pos[j][1], dist = Math.hypot(dx, dy) || 0.01, f = k * k / dist;
+      disp[i][0] += dx / dist * f; disp[i][1] += dy / dist * f; disp[j][0] -= dx / dist * f; disp[j][1] -= dy / dist * f;
+    }
+    for (const e of d.edges) {
+      const i = idx[e.a], j = idx[e.b], dx = pos[i][0] - pos[j][0], dy = pos[i][1] - pos[j][1], dist = Math.hypot(dx, dy) || 0.01, f = dist * dist / k * e.score;
+      disp[i][0] -= dx / dist * f; disp[i][1] -= dy / dist * f; disp[j][0] += dx / dist * f; disp[j][1] += dy / dist * f;
+    }
+    pos.forEach((p, i) => { if (d.nodes[i].is_query) return; const m = Math.hypot(...disp[i]) || 1; p[0] = Math.min(W - 40, Math.max(40, p[0] + disp[i][0] / m * Math.min(m, temp))); p[1] = Math.min(H - 20, Math.max(20, p[1] + disp[i][1] / m * Math.min(m, temp))); });
+  }
+  window._net = { pos, idx };
+  let s = `<svg class="chart network" viewBox="0 0 ${W} ${H}" role="img" aria-label="Interaction network" style="touch-action:none">`;
+  for (const e of d.edges) { const [a, b] = [pos[idx[e.a]], pos[idx[e.b]]]; s += `<line data-a="${idx[e.a]}" data-b="${idx[e.b]}" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="var(--muted)" stroke-opacity="${0.25 + 0.6 * e.score}" stroke-width="${0.5 + 4 * (e.score - 0.4)}"><title>score ${e.score}</title></line>`; }
+  d.nodes.forEach((n, i) => {
+    const [x, y] = pos[i];
+    s += `<g class="node" data-i="${i}" transform="translate(${x},${y})" style="cursor:pointer"><circle r="${n.is_query ? 16 : 11}" fill="${n.is_query ? "var(--accent)" : "var(--panel)"}" stroke="var(--accent)" stroke-width="2"/>
+      <text y="${n.is_query ? 30 : 24}" text-anchor="middle" style="fill:var(--text);font-size:11px;font-weight:${n.is_query ? 700 : 400}">${esc(n.name)}</text></g>`;
+  });
+  return s + "</svg>";
+}
+function wireNetwork(d) {
+  const svg = $("svg.network"); if (!svg) return;
+  let drag = null, moved = false;
+  const pt = ev => { const p = svg.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY; return p.matrixTransform(svg.getScreenCTM().inverse()); };
+  svg.addEventListener("pointerdown", ev => { const g = ev.target.closest(".node"); if (g) { drag = +g.dataset.i; moved = false; svg.setPointerCapture(ev.pointerId); } });
+  svg.addEventListener("pointermove", ev => {
+    if (drag === null) return; moved = true;
+    const p = pt(ev); window._net.pos[drag] = [p.x, p.y];
+    $(`.node[data-i="${drag}"]`, svg).setAttribute("transform", `translate(${p.x},${p.y})`);
+    $$("line", svg).forEach(l => { if (+l.dataset.a === drag) { l.setAttribute("x1", p.x); l.setAttribute("y1", p.y); } if (+l.dataset.b === drag) { l.setAttribute("x2", p.x); l.setAttribute("y2", p.y); } });
+  });
+  svg.addEventListener("pointerup", ev => {
+    const i = drag; drag = null;
+    if (i !== null && !moved && !d.nodes[i].is_query) location.href = partnerLink(d.nodes[i].name, d.taxon);
+  });
+}
+
+async function loadPathways(e) {
+  try {
+    const d = await api(`/api/protein/${encodeURIComponent(e.accession)}/pathways`);
+    if (!d.pathways.length) { $("#pathways").innerHTML = `<p class="muted">Reactome has no pathways for this protein (it mainly covers human and model organisms).</p>`; return; }
+    const normal = d.pathways.filter(p => !p.disease), disease = d.pathways.filter(p => p.disease);
+    const list = ps => ps.map(p => `<li><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.name)}</a>${p.inferred ? ' <span class="pill" title="Predicted from the human pathway by orthology">inferred</span>' : ""}</li>`).join("");
+    $("#pathways").innerHTML = `<p class="muted small">${d.pathways.length} pathway(s) in Reactome.</p>
+      <div class="grid2"><div><h3>Normal biology (${normal.length})</h3><ul class="small">${list(normal) || "<li class='muted'>none</li>"}</ul></div>
+      <div><h3>Disease (${disease.length})</h3><ul class="small">${list(disease) || "<li class='muted'>none</li>"}</ul></div></div>`;
+  } catch (err) { $("#pathways").innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+}
+
+async function loadPfam(e) {
+  try {
+    const { domains } = await api(`/api/protein/${encodeURIComponent(e.accession)}/domains`);
+    if (!domains.length) { $("#pfam").innerHTML = '<p class="muted">InterPro lists no Pfam domains for this protein.</p>'; return; }
+    const W = 760, L = 8, X = p => L + (W - 2 * L) * (p - 1) / Math.max(e.length - 1, 1);
+    const colors = ["#3b82f6", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#84cc16"];
+    const fam = [...new Set(domains.map(d => d.accession))];
+    let svg = `<svg class="tracks" viewBox="0 0 ${W} 46" role="img" aria-label="Pfam domains"><rect class="lane" x="${L}" y="14" width="${W - 2 * L}" height="6" rx="3"/>`;
+    domains.forEach((d, i) => { svg += `<rect class="feat" data-i="${i}" x="${X(d.start)}" y="6" width="${Math.max(X(d.end) - X(d.start), 3)}" height="22" rx="5" fill="${colors[fam.indexOf(d.accession) % colors.length]}"><title>${esc(d.name)} ${d.start}–${d.end}</title></rect>`; });
+    for (const t of niceTicks(1, e.length, 6)) svg += `<text x="${X(t)}" y="42" text-anchor="middle">${Math.round(t)}</text>`;
+    $("#pfam").innerHTML = svg + `</svg><div class="table-wrap"><table><thead><tr><th>Pfam</th><th>Name</th><th>Position</th></tr></thead><tbody>
+      ${domains.map((d, i) => `<tr class="click" data-pf="${i}"><td class="mono"><a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.accession)}</a></td><td>${esc(d.name)}</td><td>${d.start}–${d.end}</td></tr>`).join("")}
+    </tbody></table></div><p class="muted small">Click a domain to highlight it in the sequence and 3D structure.</p>`;
+    const pick = i => { const d = domains[i]; analysisCtl && analysisCtl.highlight(d.start, d.end); $("#selinfo").innerHTML = `Selected: <b>${esc(d.name)}</b> ${d.start}–${d.end}`; };
+    $("#pfam svg").addEventListener("click", ev => { const r = ev.target.closest(".feat"); if (r) pick(+r.dataset.i); });
+    $$("#pfam tr[data-pf]").forEach(tr => tr.onclick = ev => { if (ev.target.tagName !== "A") pick(+tr.dataset.pf); });
+  } catch (err) { $("#pfam").innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+}
+
+async function loadStructure(acc) {
+  try {
+    structure = await api("/api/structure/" + encodeURIComponent(acc));
+    await waitFor3Dmol();
+    $("#structinfo").innerHTML = `AlphaFold DB model v${esc(structure.version)} · residues ${structure.start}–${structure.end} · mean pLDDT <b>${fmt(structure.mean_plddt, 1)}</b> ·
+      <a href="${esc(structure.url)}" target="_blank" rel="noopener">open in AlphaFold DB ↗</a>`;
+    viewer = $3Dmol.createViewer($("#viewer"), { backgroundColor: getComputedStyle(document.body).backgroundColor });
+    viewer.addModel(structure.pdb, "pdb");
+    applyStyle(); viewer.zoomTo(); viewer.render();
+    loadSS(acc);
+    const MODES = { plddt: "confidence", ss: "helix / strand", rainbow: "N→C rainbow" };
+    $("#color").onclick = () => {
+      colorMode = colorMode === "plddt" ? "ss" : colorMode === "ss" ? "rainbow" : "plddt";
+      $("#color").textContent = "Colour: " + MODES[colorMode];
+      $("#legend").innerHTML = colorMode === "plddt" ? PLDDT.map(([, c, l]) => `<span style="background:${c}">${l}</span>`).join("")
+        : colorMode === "ss" ? `<span style="background:#ef4444;color:#fff">α-helix</span><span style="background:#f59e0b">β-strand</span><span style="background:#cbd5e1">coil</span>`
+        : `<span class="muted">blue = start (N-terminus) … red = end (C-terminus)</span>`;
+      applyStyle();
+    };
+    $("#spin").onclick = () => { spinning = !spinning; viewer.spin(spinning ? "y" : false); $("#spin").textContent = spinning ? "Stop" : "Spin"; };
+    $("#surf").onclick = () => {
+      if (surface !== null) { viewer.removeSurface(surface); surface = null; $("#surf").textContent = "Surface"; }
+      else { surface = viewer.addSurface($3Dmol.SurfaceType.VDW, { opacity: 0.75, colorfunc: a => colorMode === "plddt" ? plddtColor(a.b) : "#cccccc" }); $("#surf").textContent = "Hide surface"; }
+      viewer.render();
+    };
+    $("#reset").onclick = () => { highlight3d(null); viewer.zoomTo(); viewer.render(); };
+    document.addEventListener("themechange", () => { viewer.setBackgroundColor(getComputedStyle(document.body).backgroundColor); viewer.render(); });
+  } catch (err) {
+    $("#structinfo").textContent = err.message;
+    $("#viewer").style.display = "none"; $$("#structcard .row button").forEach(b => b.disabled = true);
+  }
+}
+function waitFor3Dmol() {
+  return new Promise((ok, fail) => { let n = 0; const t = setInterval(() => { if (window.$3Dmol) { clearInterval(t); ok(); } else if (++n > 100) { clearInterval(t); fail(new Error("3D viewer failed to load.")); } }, 50); });
+}
+let hl = null;
+function applyStyle() {
+  if (!viewer) return;
+  const SSC = { H: "#ef4444", E: "#f59e0b", C: "#cbd5e1" };
+  const cartoon = colorMode === "plddt" ? { colorfunc: a => plddtColor(a.b) }
+    : colorMode === "ss" && SF ? { colorfunc: a => SSC[SF.secondary_structure[a.resi - SF.first_residue]] || SSC.C }
+    : { color: "spectrum" };
+  viewer.setStyle({}, { cartoon });
+  if (hl) {
+    viewer.setStyle({ resi: `${hl[0]}-${hl[1]}` }, { cartoon: { color: "#f472b6" }, stick: { color: "#f472b6", radius: 0.15 } });
+  }
+  viewer.render();
+}
+function highlight3d(a, b) {
+  hl = a ? [a, b] : null; applyStyle();
+  if (viewer && hl) { viewer.zoomTo({ resi: `${a}-${b}` }, 600); }
+}
+</script>
+{% endblock %}

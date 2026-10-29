@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block kind %}comparison{% endblock %}
+{% block title %}Compare · Protein Analyzer{% endblock %}
+{% block content %}
+<h1>Compare proteins</h1>
+<nav class="subtabs"><a class="on" href="/compare">Two proteins</a><a href="/align">Many proteins + family tree</a><a href="/structures">3D structures</a></nav>
+<p class="sub">Enter a UniProt accession or paste a sequence for each. BLOSUM62 scoring, affine gaps (open 11, extend 1).
+  Alignment is exact dynamic programming, so it is limited to {{ "{:,}".format(max_align) }} residues per sequence.</p>
+<div class="card noprint">
+  <div class="grid2">
+    <div><h3>Protein A</h3><textarea id="a" style="min-height:90px" placeholder="P69905 or a sequence" aria-label="Protein A"></textarea></div>
+    <div><h3>Protein B</h3><textarea id="b" style="min-height:90px" placeholder="P68871 or a sequence" aria-label="Protein B"></textarea></div>
+  </div>
+  <div id="recent" class="recent"></div>
+  <div class="row" style="margin-top:10px">
+    <label><input type="radio" name="mode" value="global" checked> Global</label>
+    <label><input type="radio" name="mode" value="local"> Local</label>
+    <span id="gtip"></span>
+    <button id="go">Align</button>
+    <button class="secondary" id="swap" title="Swap A and B">⇄ Swap</button>
+    <button class="secondary" id="example">Example</button>
+  </div>
+  <div id="msg"></div>
+</div>
+<div id="out"></div>
+<div class="card noprint">
+  <h2>Find similar proteins in my dataset</h2>
+  <p class="muted">Nearest neighbours of protein A among the proteins in the dataset built on the Dataset &amp; ML page, ranked by 3-mer similarity<span id="ktip"></span>.</p>
+  <button class="secondary" id="sim">Find similar to A</button>
+  <div id="simmsg"></div><div id="simout"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+$("#gtip").innerHTML = tip("global"); $("#ktip").innerHTML = tip("kmer");
+const p = new URLSearchParams(location.search);
+if (p.get("a")) $("#a").value = p.get("a");
+if (p.get("b")) $("#b").value = p.get("b");
+renderRecent($("#recent"), acc => {
+  const target = !$("#a").value.trim() ? $("#a") : !$("#b").value.trim() ? $("#b") : $("#b");
+  target.value = acc;
+}, "Recent (click to fill A, then B):");
+$("#example").onclick = () => { $("#a").value = "P69905"; $("#b").value = "P68871"; };
+$("#swap").onclick = () => { [$("#a").value, $("#b").value] = [$("#b").value, $("#a").value]; };
+$("#go").onclick = async () => {
+  const btn = $("#go"); showMsg($("#msg"), ""); $("#out").innerHTML = "";
+  busy(btn, true, "Aligning");
+  try {
+    const mode = $("input[name=mode]:checked").value;
+    const r = await api("/api/compare", { json: { a: $("#a").value, b: $("#b").value, mode } });
+    if (r.accession_a) addRecent(r.accession_a, r.name_a.replace(r.accession_a, "").trim());
+    if (r.accession_b) addRecent(r.accession_b, r.name_b.replace(r.accession_b, "").trim());
+    $("#out").innerHTML = `<div class="card">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(r.name_a)} vs ${esc(r.name_b)} <span class="pill">${r.mode}</span></h2>
+        <span class="row noprint"><button class="secondary" id="dlaln">Download alignment</button>${saveButton()}<button class="secondary" onclick="print()">Print / Save as PDF</button></span></div>
+      <div class="stats">
+        <div class="stat"><div class="k">Identity${tip("identity")}</div><div class="v">${r.identity}%</div><small class="muted">${r.identical}/${r.length}</small></div>
+        <div class="stat"><div class="k">Similarity${tip("similarity")}</div><div class="v">${r.similarity}%</div><small class="muted">${r.positives}/${r.length}</small></div>
+        <div class="stat"><div class="k">Score${tip("score")}</div><div class="v">${r.score}</div></div>
+        <div class="stat"><div class="k">Gaps${tip("gaps")}</div><div class="v">${r.gaps}</div><small class="muted">${r.gap_percent}%</small></div>
+        <div class="stat"><div class="k">Coverage A${tip("coverage")}</div><div class="v">${r.coverage_a}%</div><small class="muted">${r.range_a.join("–")} of ${r.len_a}</small></div>
+        <div class="stat"><div class="k">Coverage B${tip("coverage")}</div><div class="v">${r.coverage_b}%</div><small class="muted">${r.range_b.join("–")} of ${r.len_b}</small></div>
+      </div>
+      <p class="muted small">${interpret(r)}</p>
+      <div class="legend muted" style="margin-bottom:6px"><span class="aln"><span class="id">A</span></span> identical
+        <span class="aln"><span class="pos">A</span></span> similar (BLOSUM62 &gt; 0)${tip("blosum")} <span class="aln gap">-</span> gap</div>
+      <div class="aln">${alignmentHtml(r)}</div></div>`;
+    $("#dlaln").onclick = () => downloadText("alignment.txt", "comparison", alignmentText(r));
+    const sb = $("#out .save-btn");
+    if (sb) sb.onclick = () => saveToProject("comparison", `${r.name_a} vs ${r.name_b}`, r);
+  } catch (e) { showMsg($("#msg"), e.message); }
+  finally { busy(btn, false); }
+};
+
+function interpret(r) {
+  const id = r.identity;
+  const what = id >= 90 ? "nearly identical: the same protein, a version from a close species, or a recently duplicated gene"
+    : id >= 40 ? "clearly related (homologous); likely a similar structure and often a similar function"
+    : id >= 25 ? "in the 'twilight zone': possibly related, but identity alone can't prove it"
+    : "probably unrelated (or too distantly related to tell from sequence alone)";
+  return `Rule of thumb: ${id}% identity over ${r.length} columns, so the proteins are ${what}.`;
+}
+
+function alignmentText(r, width = 60) {
+  const out = [`${r.name_a} vs ${r.name_b} (${r.mode}); score ${r.score}; identity ${r.identity}%; similarity ${r.similarity}%; gaps ${r.gaps}`, ""];
+  for (let i = 0; i < r.length; i += width) out.push("A " + r.aligned_a.slice(i, i + width), "  " + r.match_line.slice(i, i + width), "B " + r.aligned_b.slice(i, i + width), "");
+  return out.join("\n");
+}
+
+function alignmentHtml(r, width = 60) {
+  const out = []; let ia = r.range_a[0], ib = r.range_b[0];
+  const pad = s => String(s).padStart(6);
+  for (let i = 0; i < r.length; i += width) {
+    const A = r.aligned_a.slice(i, i + width), B = r.aligned_b.slice(i, i + width), M = r.match_line.slice(i, i + width);
+    const color = (s) => [...s].map((c, k) => c === "-" ? '<span class="gap">-</span>' : M[k] === "|" ? `<span class="id">${c}</span>` : M[k] === ":" ? `<span class="pos">${c}</span>` : c).join("");
+    const na = [...A].filter(c => c !== "-").length, nb = [...B].filter(c => c !== "-").length;
+    out.push(`<span class="lbl">A ${pad(ia)} </span>${color(A)}<span class="lbl"> ${ia + na - 1}</span>\n<span class="lbl">         </span>${esc(M)}\n<span class="lbl">B ${pad(ib)} </span>${color(B)}<span class="lbl"> ${ib + nb - 1}</span>\n`);
+    ia += na; ib += nb;
+  }
+  return out.join("\n");
+}
+
+$("#sim").onclick = async () => {
+  const btn = $("#sim"); showMsg($("#simmsg"), ""); $("#simout").innerHTML = "";
+  busy(btn, true, "Searching");
+  try {
+    const d = await api("/api/similar", { json: { query: $("#a").value, top: 10 } });
+    $("#simout").innerHTML = `<p class="muted">Top matches among ${d.dataset_size.toLocaleString()} dataset proteins.${d.hits[0] && d.hits[0].similarity < 0.1 ? " Nothing in the dataset is really similar (all below 0.10)." : ""}</p><div class="table-wrap"><table>
+      <thead><tr><th>Accession</th><th>Name</th><th>Organism</th><th>Class</th><th>Split</th><th>Length</th><th>3-mer similarity</th><th></th></tr></thead><tbody>
+      ${d.hits.map(h => `<tr><td class="mono"><a href="/protein/${esc(h.accession)}">${esc(h.accession)}</a></td><td>${esc(h.name)}</td><td><i>${esc(h.organism)}</i></td>
+        <td>${esc(h.label)}</td><td>${esc(h.split)}</td><td>${h.length}</td><td>${h.similarity.toFixed(3)}</td>
+        <td><a href="#" data-acc="${esc(h.accession)}" class="use">align</a></td></tr>`).join("")}</tbody></table></div>`;
+    $$(".use").forEach(a => a.onclick = e => { e.preventDefault(); $("#b").value = a.dataset.acc; $("#go").click(); scrollTo(0, 0); });
+  } catch (e) { showMsg($("#simmsg"), e.message); }
+  finally { busy(btn, false); }
+};
+</script>
+{% endblock %}

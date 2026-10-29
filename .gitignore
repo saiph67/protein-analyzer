@@ -1,0 +1,14 @@
+__pycache__/
+.pytest_cache/
+.cache/
+*.pyc
+build/
+dist/
+*.spec
+results/esm_cache_*.joblib
+results/jobs.json
+userdata/
+release/
+showcase/clips/
+CLAUDE.md
+.claude/

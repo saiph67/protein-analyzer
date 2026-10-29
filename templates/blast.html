@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block kind %}blast{% endblock %}
+{% block title %}BLAST search · Protein Analyzer{% endblock %}
+{% block content %}
+<h1>Search UniProtKB</h1>
+<nav class="subtabs"><a href="/search">By name / keyword</a><a class="on" href="/blast">By sequence similarity (BLAST)</a></nav>
+<p class="sub">Find proteins anywhere in UniProt whose sequence resembles yours, using BLAST on the European Bioinformatics
+  Institute's servers. A typical search takes 20 seconds to a few minutes.</p>
+<div class="card noprint">
+  <label class="field">Query: UniProt accession or sequence/FASTA
+    <textarea id="q" style="min-height:90px" placeholder="P69905 or MVLSPADKTNVKAAWGKVG..."></textarea></label>
+  <div id="recent" class="recent"></div>
+  <div class="row" style="margin-top:10px; align-items:flex-end">
+    <label class="field" style="max-width:100%">Database <select id="db" style="width:auto; max-width:100%">
+      {% for k, v in blast_databases.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
+    <label class="field">Max hits <select id="max" style="width:auto"><option>25</option><option selected>50</option><option>100</option><option>250</option></select></label>
+    <label class="field grow">Your email (EBI requires one for every search)
+      <input type="text" id="email" placeholder="you@example.com" autocomplete="email" inputmode="email"></label>
+  </div>
+  <p class="muted small" style="margin:6px 0 0">The email is sent only to EBI, only when you press Search, and is remembered only in this browser.
+    EBI uses it solely to contact you about problems with your search
+    (<a href="https://www.ebi.ac.uk/about/terms-of-use" target="_blank" rel="noopener">EBI terms</a>).
+    <label style="display:inline-flex; gap:4px; margin-left:6px"><input type="checkbox" id="remember" checked> remember in this browser</label></p>
+  <div class="row" style="margin-top:10px"><button id="go">Search</button><button class="secondary" id="example">Example</button></div>
+  <div id="msg"></div>
+</div>
+<div id="status"></div>
+<div id="out"></div>
+{% endblock %}
+{% block scripts %}
+<script>
+renderRecent($("#recent"), acc => { $("#q").value = acc; });
+try { const em = localStorage.getItem("pa_ebi_email"); if (em) $("#email").value = em; } catch (e) {}
+const qs = new URLSearchParams(location.search);
+if (qs.get("q")) $("#q").value = qs.get("q");
+$("#example").onclick = () => { $("#q").value = "P69905"; };
+let timer = null, last = null, selected = new Set();
+
+$("#go").onclick = async () => {
+  showMsg($("#msg"), ""); $("#out").innerHTML = ""; clearTimeout(timer);
+  const email = $("#email").value.trim();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return showMsg($("#msg"), "EBI needs a valid email address to run BLAST.");
+  try { if ($("#remember").checked) localStorage.setItem("pa_ebi_email", email); else localStorage.removeItem("pa_ebi_email"); } catch (e) {}
+  busy($("#go"), true, "Submitting");
+  try {
+    const d = await api("/api/blast", { json: { query: $("#q").value, email, database: $("#db").value, max_hits: +$("#max").value } });
+    const t0 = Date.now();
+    $("#status").innerHTML = `<div class="card"><span class="spinner"></span> EBI job <span class="mono">${esc(d.job_id)}</span> for ${esc(d.query)} (${d.length} aa): <span id="st">queued</span> <span class="muted" id="el"></span></div>`;
+    const poll = async () => {
+      try {
+        const s = await api("/api/blast/" + encodeURIComponent(d.job_id));
+        if ($("#st")) { $("#st").textContent = s.status.toLowerCase(); $("#el").textContent = `· ${Math.round((Date.now() - t0) / 1000)} s`; }
+        if (s.status === "FINISHED") { $("#status").innerHTML = ""; busy($("#go"), false); show(s.result, d); return; }
+        if (s.error) { $("#status").innerHTML = ""; busy($("#go"), false); showMsg($("#msg"), s.error); return; }
+        timer = setTimeout(poll, 5000);  // EBI asks clients to poll no more than every few seconds
+      } catch (e) { $("#status").innerHTML = ""; busy($("#go"), false); showMsg($("#msg"), e.message); }
+    };
+    timer = setTimeout(poll, 4000);
+  } catch (e) { showMsg($("#msg"), e.message); busy($("#go"), false); }
+};
+
+function show(res, job) {
+  last = { ...res, query: job.query, job_id: job.job_id };
+  selected = new Set();
+  if (!res.hits.length) { $("#out").innerHTML = `<div class="card">No significant hits (E-value ≤ 0.001).</div>`; return; }
+  $("#out").innerHTML = `<div class="card">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">${res.hits.length} hits for ${esc(job.query)}</h2>
+      <span class="row noprint"><button class="secondary" id="alignsel" disabled>Align selected</button><button class="secondary" id="dl">Download CSV</button>${saveButton()}</span></div>
+    <p class="muted small">Identity${tip("identity")} and E-value: the expected number of hits this good by pure chance; below 1e-10 means almost certainly related. Tick 3–20 rows to build a family tree.</p>
+    <div class="table-wrap"><table><thead><tr><th>✓</th><th>Accession</th><th>Name</th><th>Organism</th><th>Identity</th><th>E-value</th><th>Bits</th><th>Aligned</th><th></th></tr></thead><tbody>
+    ${res.hits.map((h, i) => `<tr><td><input type="checkbox" data-acc="${esc(h.accession)}" aria-label="select ${esc(h.accession)}"></td>
+      <td class="mono"><a href="/protein/${esc(h.accession)}">${esc(h.accession)}</a></td><td>${esc(h.name)}</td><td><i>${esc(h.organism || "")}</i></td>
+      <td>${h.identity ?? "–"}%</td><td>${esc(h.evalue)}</td><td>${h.bit_score ?? ""}</td><td class="small">${h.query_range.join("–")} ↔ ${h.hit_range.join("–")}</td>
+      <td><a href="/compare?a=${encodeURIComponent(ACC_RE.test(job.query.split(" ")[0]) ? job.query.split(" ")[0] : "")}&b=${esc(h.accession)}">compare</a></td></tr>`).join("")}
+    </tbody></table></div></div>`;
+  $$("#out input[type=checkbox]").forEach(cb => cb.onchange = () => {
+    cb.checked ? selected.add(cb.dataset.acc) : selected.delete(cb.dataset.acc);
+    const withQuery = ACC_RE.test(job.query.split(" ")[0]), total = selected.size + (withQuery ? 1 : 0);
+    $("#alignsel").disabled = total < 3 || total > 20;
+    $("#alignsel").textContent = `Align selected (${selected.size}${withQuery ? " + query" : ""})`;
+  });
+  $("#alignsel").onclick = () => {
+    const qa = job.query.split(" ")[0];
+    const accs = (ACC_RE.test(qa) ? [qa] : []).concat([...selected]);
+    location.href = "/align?accs=" + encodeURIComponent(accs.join(" "));
+  };
+  $("#dl").onclick = () => downloadCsv("blast_hits.csv", "blast", ["accession", "name", "organism", "identity_pct", "evalue", "bit_score", "query_from", "query_to", "hit_from", "hit_to"],
+    res.hits.map(h => [h.accession, h.name, h.organism, h.identity, h.evalue, h.bit_score, ...h.query_range, ...h.hit_range]));
+  const sb = $("#out .save-btn"); if (sb) sb.onclick = () => saveToProject("blast", `BLAST: ${job.query}`, last);
+}
+</script>
+{% endblock %}

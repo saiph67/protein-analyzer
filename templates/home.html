@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Protein Analyzer{% endblock %}
+{% block content %}
+<section class="hero">
+  <svg class="dna" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.2" stroke-linecap="round"><path d="M7 3c0 6 10 6 10 12s-10 6-10 6M17 3c0 6-10 6-10 12"/><path d="M8.5 7h7M8.5 17h7M9.5 12h5"/></svg>
+  <h1>Explore any protein</h1>
+  <p>Search 250 million proteins, see their 3D structures, explore disease mutations, compare species and predict function,
+    all with real data from UniProt, AlphaFold and more.</p>
+  <form id="homef" autocomplete="off">
+    <input type="text" id="homeq" placeholder="Try hemoglobin, P69905, or paste a sequence…" aria-label="Search">
+    <button type="submit">{{ icon("search", 16) }} Go</button>
+  </form>
+  <p class="hint">Examples: <a href="/protein/P68871">haemoglobin β</a> · <a href="/mutate?acc=P68871&m=E7V">sickle-cell mutation</a> ·
+    <a href="/structures?a=P69905&b=P02144">same shape, different sequence</a> · <a href="/learn">start a lesson</a></p>
+</section>
+
+<div id="resume"></div>
+
+<h2 class="section-title">Tools</h2>
+<div class="tools">
+  <a class="tool" href="/analyze"><span class="ic">{{ icon("analyze") }}</span><div><b>Analyze a sequence</b><span>Weight, charge, pI, hydropathy and membrane segments.</span></div></a>
+  <a class="tool" href="/search"><span class="ic">{{ icon("search") }}</span><div><b>Search UniProt</b><span>By name with filters, or by sequence with BLAST.</span></div></a>
+  <a class="tool" href="/compare"><span class="ic">{{ icon("compare") }}</span><div><b>Compare proteins</b><span>Align two or many, build family trees, overlay 3D shapes.</span></div></a>
+  <a class="tool" href="/mutate"><span class="ic">{{ icon("mutate") }}</span><div><b>Explore mutations</b><span>Change a residue; see AlphaMissense and known disease variants.</span></div></a>
+  <a class="tool" href="/classify"><span class="ic">{{ icon("classify") }}</span><div><b>Predict function</b><span>Machine learning that explains why it decided.</span></div></a>
+  <a class="tool" href="/lab"><span class="ic">{{ icon("lab") }}</span><div><b>Lab tools</b><span>DNA → protein, protease digests, A280 concentration.</span></div></a>
+  <a class="tool" href="/learn"><span class="ic">{{ icon("learn") }}</span><div><b>Guided lessons</b><span>Six short lessons with live data and quizzes.</span></div></a>
+  {% if not public %}<a class="tool" href="/projects"><span class="ic">{{ icon("projects") }}</span><div><b>Projects</b><span>Save results with notes; export a report.</span></div></a>{% endif %}
+</div>
+<p class="muted small" style="text-align:center">Tip: press <kbd>/</kbd> anywhere to jump to a protein or tool · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> runs the form you're typing in.</p>
+{% endblock %}
+{% block scripts %}
+<script>
+$("#homef").onsubmit = e => {
+  e.preventDefault();
+  const q = $("#homeq").value.trim();
+  if (!q) { $("#homeq").focus(); return; }
+  const items = paletteItems(q);
+  if (items.length) items[0][1]();
+};
+
+(async () => {
+  const parts = [];
+  const recent = getRecent();
+  if (recent.length) parts.push(`<div><h3>Recently viewed</h3><div id="rec" class="recent" style="margin:0"></div></div>`);
+  let progress = {}; try { progress = JSON.parse(localStorage.getItem("pa_lessons") || "{}"); } catch (e) {}
+  const started = Object.keys(progress);
+  if (started.length) parts.push(`<div><h3>Lessons</h3><p class="small">${started.length} of 6 started · <a href="/learn">continue learning →</a></p></div>`);
+  if (!window.PA_PUBLIC) {
+    try {
+      const { projects } = await api("/api/projects");
+      if (projects.length) {
+        const p = projects[0];
+        parts.push(`<div><h3>Your work</h3><p class="small"><a href="/projects#${p.id}">${esc(p.name)}</a> · ${p.n_items} item(s)` +
+          (projects.length > 1 ? ` · <a href="/projects">${projects.length - 1} more project(s)</a>` : "") + `</p></div>`);
+      }
+    } catch (e) {}
+  }
+  if (!parts.length) return;
+  $("#resume").innerHTML = `<h2 class="section-title">Pick up where you left off</h2><div class="card"><div class="grid2">${parts.join("")}</div></div>`;
+  if ($("#rec")) renderRecent($("#rec"), null, "");
+})();
+</script>
+{% endblock %}

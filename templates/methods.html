@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Methods & citations · Protein Analyzer{% endblock %}
+{% block content %}
+<h1>Methods, data sources &amp; how to cite</h1>
+<p class="sub">Everything you need to report results from this app in a lab report, poster or project, so others can check and reproduce them.</p>
+
+<div class="card">
+  <h2>This copy of the app</h2>
+  <table class="small"><tbody>
+    <tr><th>Version</th><td>{{ prov.app }}</td></tr>
+    <tr><th>UniProtKB release (live)</th><td>{{ release.release or "unknown (offline?)" }}{% if release.date %} · {{ release.date }}{% endif %}</td></tr>
+    <tr><th>Cache</th><td>Database answers are cached for up to 7 days, so results can lag a new release by up to a week.</td></tr>
+  </tbody></table>
+  <p class="small">Every download (CSV, JSON, alignment text), saved project item and printout is stamped with the app version,
+    date, UniProtKB release and the methods used.</p>
+</div>
+
+<div class="card">
+  <h2>How to report your results</h2>
+  <ol class="small">
+    <li>Name the tool and version, e.g. <i>"analysed with Protein Analyzer {{ app_version }} (UniProtKB release {{ release.release or "YYYY_MM" }})"</i>.</li>
+    <li>Cite the <b>data sources</b> you used (below). They did the scientific work; their licences require attribution.</li>
+    <li>Name the <b>method</b> for each number, e.g. "pI calculated with Bjellqvist pK values (ExPASy method)".</li>
+    <li>For anything central to your conclusions, <b>cross-check with the standard tool</b> (listed per method below). This app is a teaching and exploration tool and has not been peer-reviewed.</li>
+    <li>Never use the function classifier or AlphaMissense as proof; treat them as hypotheses to test.</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h2>Data sources</h2>
+  <div class="table-wrap"><table class="small"><thead><tr><th>Source</th><th>Licence</th><th>Cite</th></tr></thead><tbody>
+  {% for k, s in prov.sources.items() %}
+    <tr><td><a href="{{ s.url }}" target="_blank" rel="noopener">{{ s.name }}</a></td><td>{{ s.licence }}</td>
+      <td>{{ s.cite }} <a href="{{ s.how_to_cite }}" target="_blank" rel="noopener">latest ↗</a></td></tr>
+  {% endfor %}
+  </tbody></table></div>
+  <p class="muted small">Software bundled in the app: 3Dmol.js (Rego &amp; Koes 2015, Bioinformatics 31:1322; BSD), ESM-2 weights (Meta AI; MIT), DSSP algorithm ported from PyDSSP (S. Minami; MIT).</p>
+</div>
+
+<div class="card">
+  <h2>Methods and how far to trust them</h2>
+  <div class="table-wrap"><table class="small"><thead><tr><th>What</th><th>Method</th><th>Accuracy / check against</th></tr></thead><tbody>
+    <tr><td>Molecular weight, pI, charge</td><td>{{ prov.methods.molecular_weight }} {{ prov.methods.pI }}</td>
+      <td>Matches ExPASy Compute pI/Mw exactly on 46 tested proteins (pI within 0.01, MW identical).</td></tr>
+    <tr><td>GRAVY, aromaticity</td><td>{{ prov.methods.gravy }} {{ prov.methods.aromaticity }}</td><td>Standard formulas (ExPASy ProtParam).</td></tr>
+    <tr><td>Transmembrane segments</td><td>{{ prov.methods.tm }}</td><td><b>Heuristic</b>: misses merged helices and mistakes signal peptides. Check: DeepTMHMM, Phobius, UniProt annotations.</td></tr>
+    <tr><td>Secondary structure</td><td>{{ prov.methods.secondary_structure }}</td>
+      <td>{% if ss_benchmark %}{% for name, b in ss_benchmark.items() %}{{ name }}: <b>{{ "%.1f"|format(100 * b.q3) }}%</b> per-residue agreement with DSSP ({{ b.n_proteins }} AlphaFold models, {{ "{:,}".format(b.n) }} confident residues, {{ b.date }}).<br>{% endfor %}{% endif %}
+        PyDSSP's authors report &gt;97% agreement with the original DSSP. Predicted structures, not experimental.</td></tr>
+    <tr><td>Pairwise alignment</td><td>{{ prov.methods.pairwise }}</td><td>Exact algorithm (same scoring as BLAST defaults). "Identity %" definitions differ between tools: state yours.</td></tr>
+    <tr><td>Multiple alignment &amp; tree</td><td>{{ prov.methods.msa }}</td><td>Fine for clear families; <b>no branch-support values</b>. For research: MAFFT/Clustal Omega + IQ-TREE with bootstrap.</td></tr>
+    <tr><td>3D superposition</td><td>{{ prov.methods.superposition }}</td><td>Approximate TM-score; for unrelated sequences use TM-align or DALI.</td></tr>
+    <tr><td>Mutations</td><td>{{ prov.methods.mutation }}</td><td>AlphaMissense is a prediction (misses gain-of-function, e.g. sickle cell). <b>Never for clinical decisions.</b></td></tr>
+    <tr><td>Function classifier</td><td>{{ prov.methods.classifier }}</td><td>80% (ESM-2) / ~56% (hand-crafted) on unseen proteins; 7 broad classes; confidence not calibrated. Check: BLAST vs Swiss-Prot, InterProScan.</td></tr>
+    <tr><td>Explanations</td><td>{{ prov.methods.explain }}</td><td>Show what the model used, not what is biologically true.</td></tr>
+    <tr><td>BLAST</td><td>{{ prov.methods.blast }}</td><td>Run by EMBL-EBI; cite EBI and BLAST+.</td></tr>
+    <tr><td>Digest, A280, translation</td><td>{{ prov.methods.digest }} {{ prov.methods.a280 }} {{ prov.methods.translation }}</td>
+      <td>Peptide masses match reference values to 4 decimals; ε matches ProtParam. Digest rules are simplified: check with ExPASy PeptideCutter for unusual enzymes.</td></tr>
+  </tbody></table></div>
+</div>
+{% endblock %}

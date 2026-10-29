@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block kind %}mutation{% endblock %}
+{% block title %}Mutations · Protein Analyzer{% endblock %}
+{% block content %}
+<h1>Mutation explorer</h1>
+<p class="sub">Swap one amino acid for another and see what changes. For human proteins, AlphaMissense predicts how harmful
+  every possible single substitution is; UniProt lists mutations already known in people.</p>
+<div class="card noprint">
+  <div class="row" style="align-items:flex-end">
+    <label class="field grow">UniProt accession (or paste a sequence) <input type="text" id="acc" placeholder="P68871 (haemoglobin β)"></label>
+    <button id="load">Load</button>
+    <button class="secondary" id="example">Example: sickle cell</button>
+  </div>
+  <div id="recent" class="recent"></div>
+  <div id="msg"></div>
+</div>
+<div id="protein"></div>
+{% endblock %}
+{% block scripts %}
+<script>
+const AAS = "ACDEFGHIKLMNPQRSTVWY";
+let P = null;  // {accession, name, sequence, am, variants}
+renderRecent($("#recent"), acc => { $("#acc").value = acc; load(); });
+const q = new URLSearchParams(location.search);
+if (q.get("acc")) $("#acc").value = q.get("acc");
+$("#example").onclick = () => { $("#acc").value = "P68871"; load("E7V"); };
+$("#load").onclick = () => load();
+$("#acc").onkeydown = e => { if (e.key === "Enter") load(); };
+
+async function load(autoMutation) {
+  const v = $("#acc").value.trim(); showMsg($("#msg"), ""); $("#protein").innerHTML = "";
+  if (!v) return showMsg($("#msg"), "Enter an accession or a sequence.");
+  busy($("#load"), true, "Loading");
+  try {
+    if (ACC_RE.test(v)) {
+      const e = await api("/api/protein/" + v.toUpperCase());
+      P = { accession: e.accession, name: e.name, organism: e.organism, sequence: e.sequence, am: null, variants: [] };
+      addRecent(e.accession, e.name);
+      const [am, vars] = await Promise.allSettled([api(`/api/protein/${e.accession}/alphamissense`), api(`/api/protein/${e.accession}/variants`)]);
+      P.am = am.status === "fulfilled" ? am.value : null; P.amError = am.status === "rejected" ? am.reason.message : null;
+      P.variants = vars.status === "fulfilled" ? vars.value.variants : [];
+    } else {
+      const r = await api("/api/analyze", { json: { text: v } });
+      P = { accession: null, name: r.records[0].name, sequence: r.records[0].sequence, am: null, variants: [], amError: "AlphaMissense needs a UniProt accession." };
+    }
+    render();
+    if (autoMutation) runMutation({ mutation: autoMutation });
+  } catch (e) { showMsg($("#msg"), e.message); }
+  finally { busy($("#load"), false); }
+}
+
+function render() {
+  const known = P.variants.filter(v => /in [A-Z]|disease|syndrome|anemia|cancer|deficien|SKCA|dbSNP/i.test(v.description));
+  $("#protein").innerHTML = `
+  <div class="card">
+    <h2>${esc(P.name || "Sequence")} ${P.accession ? `<span class="muted mono" style="font-weight:400">${esc(P.accession)}</span>` : ""}</h2>
+    <p class="muted small">${P.sequence.length} aa${P.organism ? " · <i>" + esc(P.organism) + "</i>" : ""}</p>
+    <div class="row" style="align-items:flex-end">
+      <label class="field">Position (1–${P.sequence.length}) <input type="number" id="pos" min="1" max="${P.sequence.length}" value="1"></label>
+      <span id="cur" class="muted" style="margin-bottom:9px"></span>
+      <label class="field">Change to <select id="to" style="width:auto">${AAS.split("").map(a => `<option>${a}</option>`).join("")}</select></label>
+      <button id="go">Apply mutation</button>
+      <span class="muted" style="margin-bottom:9px">or type</span>
+      <label class="field">Mutation <input type="text" id="mut" placeholder="E7V" style="width:90px"></label>
+      <button class="secondary" id="go2">Go</button>
+    </div>
+  </div>
+  <div id="result"></div>
+  <div class="card">
+    <h2>AlphaMissense: predicted effect of every substitution${tip("am")}</h2>
+    ${P.am ? `<p class="muted small">Each column is a position, each row a replacement amino acid. <span style="color:#3b6fd6">■ likely benign</span> <span style="color:#999">■ ambiguous</span> <span style="color:#d03030">■ likely pathogenic</span>. Click a cell to apply that mutation. ${P.am.covered.toLocaleString()} substitutions scored.</p>
+      <div class="heatwrap"><canvas id="heat" height="${20 * 12 + 24}"></canvas></div><p class="small" id="heatinfo" style="min-height:1.5em"></p>`
+      : `<p class="muted">${esc(P.amError || "Not available.")}</p>`}
+  </div>
+  <div class="card">
+    <h2>Known variants in UniProt (${P.variants.length})</h2>
+    ${P.variants.length ? `<p class="muted small">Single-residue variants seen in people or natural populations. Click one to apply it.</p>
+    <div class="table-wrap" style="max-height:340px; overflow:auto"><table><thead><tr><th>Mutation</th><th>Description</th></tr></thead><tbody>
+      ${(known.length ? known : P.variants).map(v => `<tr class="click" data-m="${v.from}${v.position}${v.to}"><td class="mono">${v.from}${v.position}${v.to}</td><td>${esc(v.description)}</td></tr>`).join("")}
+    </tbody></table></div>` : `<p class="muted">${P.accession ? "UniProt lists none." : "Needs a UniProt accession."}</p>`}
+  </div>`;
+  const updCur = () => { const p = +$("#pos").value; const c = P.sequence[p - 1]; $("#cur").textContent = c ? `currently ${c}` : ""; };
+  $("#pos").oninput = updCur; updCur();
+  $("#go").onclick = () => runMutation({ position: +$("#pos").value, to: $("#to").value });
+  $("#go2").onclick = () => runMutation({ mutation: $("#mut").value });
+  $("#mut").onkeydown = e => { if (e.key === "Enter") $("#go2").click(); };
+  $$("tr[data-m]").forEach(tr => tr.onclick = () => runMutation({ mutation: tr.dataset.m }));
+  if (P.am) drawHeat();
+}
+
+function amColor(v) {
+  if (v === null || v === undefined) return null;
+  // AlphaMissense: < 0.34 likely benign, 0.34–0.564 ambiguous, > 0.564 likely pathogenic
+  const lerp = (a, b, t) => a.map((x, i) => Math.round(x + (b[i] - x) * t));
+  const c = v < 0.34 ? lerp([59, 111, 214], [200, 200, 200], v / 0.34) : v < 0.564 ? lerp([200, 200, 200], [220, 120, 120], (v - 0.34) / 0.224) : lerp([220, 120, 120], [190, 20, 20], (v - 0.564) / 0.436);
+  return `rgb(${c})`;
+}
+function drawHeat() {
+  const cv = $("#heat"), L = P.sequence.length, cw = Math.max(4, Math.min(12, Math.floor(($(".heatwrap").clientWidth - 30) / L))), ch = 12, left = 22, top = 2;
+  cv.width = left + L * cw + 4; const ctx = cv.getContext("2d");
+  const fg = getComputedStyle(document.body).color;
+  ctx.font = "10px system-ui"; ctx.fillStyle = fg;
+  AAS.split("").forEach((a, j) => ctx.fillText(a, 6, top + j * ch + 10));
+  P.am.matrix.forEach((row, i) => row.forEach((v, j) => {
+    const col = amColor(v);
+    ctx.fillStyle = col || (P.sequence[i] === AAS[j] ? fg : "transparent");
+    if (col || P.sequence[i] === AAS[j]) ctx.fillRect(left + i * cw, top + j * ch, cw - (cw > 5 ? 1 : 0), ch - 1);
+  }));
+  ctx.fillStyle = fg;
+  for (const t of niceTicks(1, L, 8)) ctx.fillText(String(Math.round(t)), left + (t - 1) * cw, top + 20 * ch + 14);
+  const at = e => { const r = cv.getBoundingClientRect(); const i = Math.floor((e.clientX - r.left - left) / cw), j = Math.floor((e.clientY - r.top - top) / ch); return (i >= 0 && i < L && j >= 0 && j < 20) ? [i, j] : null; };
+  cv.onmousemove = e => {
+    const p = at(e); if (!p) return;
+    const [i, j] = p, v = P.am.matrix[i][j], m = `${P.sequence[i]}${i + 1}${AAS[j]}`;
+    $("#heatinfo").innerHTML = P.sequence[i] === AAS[j] ? `Position ${i + 1}: original residue ${AAS[j]}` :
+      `<b>${m}</b>: AlphaMissense ${v === null ? "no score" : v.toFixed(2) + " (" + (v < 0.34 ? "likely benign" : v < 0.564 ? "ambiguous" : "likely pathogenic") + ")"} · click to apply`;
+  };
+  cv.onclick = e => { const p = at(e); if (p && P.sequence[p[0]] !== AAS[p[1]]) runMutation({ position: p[0] + 1, to: AAS[p[1]] }); };
+}
+
+async function runMutation(spec) {
+  const body = P.accession ? { accession: P.accession, ...spec } : { sequence: P.sequence, ...spec };
+  $("#result").innerHTML = `<div class="card"><span class="spinner"></span> Working…</div>`;
+  try {
+    const r = await api("/api/mutate", { json: body });
+    $("#pos").value = r.position; $("#to").value = r.to; $("#mut").value = r.mutation; $("#pos").oninput();
+    const row = (label, k, d = 2, t = "") => `<tr><td>${label}${t ? tip(t) : ""}</td><td>${fmt(r.before[k], d)}</td><td>${fmt(r.after[k], d)}</td><td style="font-weight:600">${r.delta[k] > 0 ? "+" : ""}${fmt(r.delta[k], d)}</td></tr>`;
+    const ctx = r.context, mark = (s) => { const k = r.position - ctx.start; return esc(s.slice(0, k)) + `<span class="hl">${s[k]}</span>` + esc(s.slice(k + 1)); };
+    const am = r.alphamissense;
+    $("#result").innerHTML = `<div class="card">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(r.mutation)}: ${esc(r.from_name)} → ${esc(r.to_name)}</h2>
+        <span class="row noprint">${saveButton()}<button class="secondary" onclick="print()">Print / Save as PDF</button></span></div>
+      <div class="stats" style="margin-top:12px">
+        <div class="stat"><div class="k">AlphaMissense${tip("am")}</div><div class="v">${am === null ? "–" : am.toFixed(2)}</div>
+          <small class="muted">${am === null ? (P.accession ? "no score (human proteins only)" : "needs an accession") : { LBen: "likely benign", Amb: "ambiguous", LPath: "likely pathogenic" }[r.alphamissense_class] || r.alphamissense_class}</small></div>
+        <div class="stat"><div class="k">BLOSUM62${tip("blosum")}</div><div class="v">${r.blosum62 > 0 ? "+" : ""}${r.blosum62}</div><small class="muted">${esc(r.blosum_meaning)}</small></div>
+        <div class="stat"><div class="k">Chemistry</div><div class="v" style="font-size:1rem">${esc(r.from_group)} → ${esc(r.to_group)}</div></div>
+        <div class="stat"><div class="k">Local hydropathy${tip("hydropathy")}</div><div class="v">${fmt(r.local_hydropathy.before, 2)} → ${fmt(r.local_hydropathy.after, 2)}</div><small class="muted">19-residue window</small></div>
+      </div>
+      ${r.known_variants.length ? `<div class="msg info"><b>Known in UniProt at position ${r.position}:</b> ${r.known_variants.map(v => `${esc(v.from + v.position + v.to)}: ${esc(v.description)}`).join("<br>")}</div>` : ""}
+      ${r.notes.length ? `<ul>${r.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
+      <div class="seqview" style="max-height:none">before ${String(ctx.start).padStart(5)} ${mark(ctx.before)}\nafter  ${String(ctx.start).padStart(5)} ${mark(ctx.after)}</div>
+      <div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Whole-protein property</th><th>Before</th><th>After</th><th>Change</th></tr></thead><tbody>
+        ${row("Molecular weight (Da)", "molecular_weight", 2, "mw")}${row("GRAVY", "gravy", 4, "gravy")}${row("pI", "isoelectric_point", 3, "pi")}${row("Charge at pH 7", "charge_ph7", 3, "charge")}${row("Aromaticity", "aromaticity", 4, "aromaticity")}${row("Predicted TM segments", "n_tm_segments", 0, "tm")}
+      </tbody></table></div>
+      <p class="muted small">Whole-protein numbers barely move for one residue; what matters is usually <i>where</i> the change is
+        (buried core, active site, binding surface) and how different the new residue is.</p></div>`;
+    const sb = $("#result .save-btn");
+    if (sb) sb.onclick = () => saveToProject("mutation", `${P.accession || P.name} ${r.mutation}`, { ...r, protein: P.name });
+  } catch (e) { $("#result").innerHTML = `<div class="card"><div class="msg error">${esc(e.message)}</div></div>`; }
+}
+if (q.get("acc")) load(q.get("m"));
+</script>
+{% endblock %}

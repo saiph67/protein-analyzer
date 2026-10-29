@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Dataset & ML · Protein Analyzer{% endblock %}
+{% block content %}
+<h1>Dataset &amp; machine learning</h1>
+<p class="sub">Build a labelled dataset from reviewed UniProt entries (classes = UniProt keywords) with a <b>time split</b>:
+  train on entries first published on/before the cutoff, evaluate on entries published after it. Jobs run in the background; you can keep using the app.</p>
+<div id="lastjob"></div>
+{% if public %}<div class="msg info">This is a shared server: building datasets and training are turned off. The results below are from the models it ships with.</div>{% endif %}
+<div class="grid2" {% if public %}style="display:none"{% endif %}>
+  <div class="card">
+    <h2>1 · Build dataset</h2>
+    <div class="checks">
+      {% for name, kw in classes.items() %}<label><input type="checkbox" name="cls" value="{{ name }}" checked> {{ name.replace('_', ' ') }} <span class="muted small">{{ kw }}</span></label>{% endfor %}
+      <label><input type="checkbox" id="other" checked> other <span class="muted small">none of these</span></label><span class="t" data-k="other"></span>
+    </div>
+    <div class="row" style="margin-top:8px; align-items:flex-end">
+      <label class="field">Train per class <input type="number" id="per" value="400" min="20" max="2000"></label>
+      <label class="field">Hold-out per class <input type="number" id="ho" value="100" min="5" max="500"></label>
+      <label class="field"><span>Cutoff date<span class="t" data-k="cutoff"></span></span><input type="date" id="cut" value="2018-12-31"></label>
+    </div>
+    <p class="muted small">Sampled across taxonomic groups<span class="t" data-k="strata"></span> · about 3–5 minutes for the defaults.</p>
+    <div class="row" style="margin-top:10px"><button id="build">Build dataset</button></div>
+    <div id="bmsg"></div>
+  </div>
+  <div class="card">
+    <h2>2 · Train &amp; evaluate</h2>
+    <div class="checks" style="display:flex; flex-direction:column; align-items:flex-start">
+      <label><input type="radio" name="backend" value="handcrafted" checked> Hand-crafted features + random forest<span class="t" data-k="handcrafted"></span> <span class="muted small">~1 min</span></label>
+      <label><input type="radio" name="backend" value="esm2" {{ '' if esm else 'disabled' }}> ESM-2 language model + logistic regression<span class="t" data-k="esm"></span>
+        <span class="muted small">{{ '~12 min first time (embeddings are cached)' if esm else 'needs PyTorch + transformers (see README)' }}</span></label>
+    </div>
+    <div class="row" style="margin-top:6px; align-items:flex-end">
+      <label class="field">Trees (random forest) <input type="number" id="trees" value="500" min="50" max="2000"></label>
+      <label><input type="checkbox" id="align" checked> alignment-identity leakage check</label>
+    </div>
+    <div class="row" style="margin-top:10px"><button id="train">Train model</button><a class="btn secondary" id="report" href="/results/report.md" target="_blank" style="display:none">latest report.md</a></div>
+    <div id="tmsg"></div>
+  </div>
+</div>
+<div class="card" id="job" style="display:none">
+  <div class="row" style="justify-content:space-between"><b id="jobtitle"></b><span class="row"><span id="jobmsg" class="muted small"></span><button class="danger" id="cancel">Cancel</button></span></div>
+  <div class="progress" style="margin-top:8px"><div id="bar"></div></div>
+</div>
+<div id="dataset"></div>
+<div id="tabs" class="row noprint" style="margin-bottom:10px"></div>
+<div id="metrics"></div>
+{% endblock %}
+{% block scripts %}
+<script>
+$$(".t").forEach(s => s.outerHTML = tip(s.dataset.k));
+const NAMES = { handcrafted: "Hand-crafted + random forest", esm2: "ESM-2 + logistic regression" };
+let status = null, shown = null;
+
+async function refresh() {
+  status = await api("/api/ml/status");
+  const s = status, ds = s.dataset;
+  const lj = s.last_job;
+  let dismissed = null; try { dismissed = localStorage.getItem("pa_dismissed_job"); } catch (e) {}
+  $("#lastjob").innerHTML = lj && ["interrupted", "error"].includes(lj.state) && !s.running && dismissed !== lj.id
+    ? `<div class="msg warn"><button class="dismiss" type="button" aria-label="Dismiss" title="Dismiss">✕</button>The last ${esc(lj.kind)} job ${lj.state === "interrupted" ? "was interrupted" : "failed"}: ${esc(lj.error)}</div>` : "";
+  const db = $("#lastjob .dismiss");
+  if (db) db.onclick = () => { try { localStorage.setItem("pa_dismissed_job", lj.id); } catch (e) {} $("#lastjob").innerHTML = ""; };
+  $("#dataset").innerHTML = ds ? `<div class="card"><h2>Dataset <span class="muted small" style="font-weight:400">built ${esc(ds.built)} · cutoff ${esc(ds.cutoff)} · ${ds.n_total} proteins${ds.sampling ? " · " + esc(ds.sampling.split(" (")[0]) : ""}</span></h2>
+    ${(ds.warnings || []).map(w => `<div class="msg warn">${esc(w)}</div>`).join("")}
+    <div class="table-wrap"><table><thead><tr><th>Class</th><th>Keyword</th><th>Train</th><th>Hold-out</th><th>Human %</th><th>Available train / hold-out in UniProt</th></tr></thead><tbody>
+    ${Object.entries(ds.counts).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="mono">${esc(ds.classes[k] || "none of the others")}</td><td>${v.train ?? 0}</td><td>${v.holdout ?? 0}</td>
+      <td>${ds.human_fraction ? pct(ds.human_fraction[k], 0) : "–"}</td>
+      <td class="muted">${(ds.availability[k]?.train_available ?? 0).toLocaleString()} / ${(ds.availability[k]?.holdout_available ?? 0).toLocaleString()}</td></tr>`).join("")}
+    </tbody></table></div></div>` : `<div class="card muted">No dataset yet.</div>`;
+  $("#report").style.display = s.has_report ? "" : "none";
+  const backends = Object.keys(s.metrics);
+  if (!backends.length) { $("#tabs").innerHTML = ""; $("#metrics").innerHTML = ""; return s; }
+  if (!shown || !s.metrics[shown]) shown = backends.sort((a, b) => s.metrics[b].holdout.accuracy - s.metrics[a].holdout.accuracy)[0];
+  $("#tabs").innerHTML = (backends.length > 1 ? `<span class="muted">Results for:</span>` : "") + backends.map(b =>
+    `<button class="${b === shown ? "" : "secondary"}" data-b="${b}">${esc(NAMES[b])} · ${pct(s.metrics[b].holdout.accuracy)}</button>`).join("") +
+    `<button class="secondary" onclick="print()">Print / Save as PDF</button>`;
+  $$("#tabs button[data-b]").forEach(btn => btn.onclick = () => { shown = btn.dataset.b; refresh(); });
+  renderMetrics(s.metrics[shown], s.metrics);
+  return s;
+}
+
+function renderMetrics(m, all) {
+  const row = (name, v, bold) => `<tr><td>${bold ? "<b>" + esc(name) + "</b>" : esc(name)}</td><td>${pct(v.accuracy)}</td><td>${pct(v.balanced_accuracy)}</td><td>${pct(v.macro_f1)}</td></tr>`;
+  const lo = m.holdout_low_similarity, st = m.holdout_below_30pct_identity;
+  const v = Date.now();
+  $("#metrics").innerHTML = `<div class="card"><h2>${esc(NAMES[m.backend])} · time-split hold-out <span class="muted small" style="font-weight:400">trained ${esc(m.trained)} · <a href="/results/report_${m.backend}.md" target="_blank">report</a></span></h2>
+    <p class="muted small">${esc(m.model)}</p>
+    <div class="stats">
+      <div class="stat"><div class="k">Hold-out accuracy${tip("holdout")}</div><div class="v">${pct(m.holdout.accuracy)}</div><small class="muted">n = ${m.n_holdout}</small></div>
+      <div class="stat"><div class="k">Balanced acc.${tip("balanced_accuracy")}</div><div class="v">${pct(m.holdout.balanced_accuracy)}</div></div>
+      <div class="stat"><div class="k">Macro-F1${tip("macro_f1")}</div><div class="v">${pct(m.holdout.macro_f1)}</div></div>
+      ${lo ? `<div class="stat"><div class="k">Low-similarity${tip("low_sim")}</div><div class="v">${pct(lo.accuracy)}</div><small class="muted">n = ${lo.n}</small></div>` : ""}
+      ${st ? `<div class="stat"><div class="k">&lt;30% identity${tip("identity_bin")}</div><div class="v">${pct(st.accuracy)}</div><small class="muted">n = ${st.n} · honest number</small></div>` : ""}
+      ${m.holdout_redundancy_filtered ? `<div class="stat"><div class="k">Redundancy-filtered${tip("redundancy")}</div><div class="v">${pct(m.holdout_redundancy_filtered.accuracy)}</div><small class="muted">n = ${m.holdout_redundancy_filtered.n} (${m.holdout_redundancy_filtered.removed} near-copies removed)</small></div>` : ""}
+      <div class="stat"><div class="k">Chance level${tip("chance")}</div><div class="v">${pct(1 / m.classes.length)}</div></div>
+    </div>
+    <h3>This model vs. baselines${tip("baseline")}</h3>
+    <div class="table-wrap"><table><thead><tr><th>Method</th><th>Accuracy</th><th>Balanced acc.</th><th>Macro-F1</th></tr></thead><tbody>
+      ${row(NAMES[m.backend] + " (this model)", m.holdout, true)}${Object.entries(m.baselines).map(([k, v]) => row(k, v)).join("")}</tbody></table></div>
+    <div class="grid2" style="margin-top:12px">
+      <div><h3>Accuracy by similarity to training set</h3><table><thead><tr><th>3-mer similarity${tip("kmer")}</th><th>n</th><th>Accuracy</th></tr></thead><tbody>
+        ${m.accuracy_by_similarity.map(b => `<tr><td>${esc(b.bin)}</td><td>${b.n}</td><td>${pct(b.accuracy)}</td></tr>`).join("")}</tbody></table>
+        ${m.accuracy_by_identity.length ? `<table style="margin-top:8px"><thead><tr><th>Identity to nearest</th><th>n</th><th>Accuracy</th></tr></thead><tbody>
+        ${m.accuracy_by_identity.map(b => `<tr><td>${esc(b.bin)}</td><td>${b.n}</td><td>${pct(b.accuracy)}</td></tr>`).join("")}</tbody></table>` : ""}</div>
+      <div><h3>Confusion matrix (rows = true)${tip("confusion")}</h3><div class="table-wrap"><table><thead><tr><th></th>${m.classes.map(c => `<th>${esc(c.replace("_", " "))}</th>`).join("")}</tr></thead><tbody>
+        ${m.confusion_matrix.map((r, i) => `<tr><th>${esc(m.classes[i].replace("_", " "))}</th>${r.map((v, j) => `<td style="${i === j ? "font-weight:700" : ""}">${v}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
+        <h3>Per-class recall</h3>${m.classes.map(c => `<span class="pill">${esc(c)}: ${pct(m.per_class[c].recall)} (n=${m.per_class[c].n})</span>`).join("")}</div>
+    </div>
+    ${m.patterns ? `<h3>Class patterns</h3><div class="table-wrap"><table><thead><tr><th>Class</th><th>Median length</th><th>GRAVY${tip("gravy")}</th><th>pI${tip("pi")}</th><th>Charge/100</th><th>With TM</th><th>Enriched</th><th>Depleted</th></tr></thead><tbody>
+      ${Object.entries(m.patterns).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v.median_length}</td><td>${v.mean_gravy}</td><td>${v.mean_pI}</td><td>${v.mean_charge_per_100}</td><td>${pct(v.frac_with_tm, 0)}</td><td>${esc(v.enriched.join(", "))}</td><td>${esc(v.depleted.join(", "))}</td></tr>`).join("")}</tbody></table></div>` : ""}
+  </div>
+  <div class="card"><h2>Figures</h2><div class="imgs">${m.figures.map(f => `<a href="/results/${f}?v=${v}" target="_blank"><img loading="lazy" src="/results/${f}?v=${encodeURIComponent(m.trained)}" alt="${esc(f)}"></a>`).join("")}</div></div>`;
+}
+
+let polling = null, currentJob = null;
+function watch(jid, title) {
+  currentJob = jid;
+  $("#job").style.display = ""; $("#jobtitle").textContent = title; $("#cancel").disabled = false;
+  $("#build").disabled = $("#train").disabled = true;
+  clearInterval(polling);
+  polling = setInterval(async () => {
+    try {
+      const j = await api("/api/jobs/" + jid);
+      $("#bar").style.width = (100 * j.progress) + "%"; $("#jobmsg").textContent = j.message;
+      if (!["running", "cancelling"].includes(j.state)) {
+        clearInterval(polling); $("#build").disabled = $("#train").disabled = false;
+        const box = j.kind === "dataset" ? $("#bmsg") : $("#tmsg");
+        if (j.state === "error") showMsg(box, j.error);
+        else showMsg(box, j.message, j.state === "cancelled" ? "warn" : "info");
+        $("#job").style.display = "none";
+        if (j.state === "done" && j.kind === "train") shown = j.result.backend;
+        refresh();
+      }
+    } catch (e) { clearInterval(polling); showMsg($("#tmsg"), e.message); $("#build").disabled = $("#train").disabled = false; }
+  }, 1000);
+}
+$("#cancel").onclick = async () => {
+  if (!currentJob) return;
+  $("#cancel").disabled = true;
+  try { await api(`/api/jobs/${currentJob}/cancel`, { method: "POST" }); } catch (e) { showMsg($("#tmsg"), e.message); }
+};
+
+$("#build").onclick = async () => {
+  showMsg($("#bmsg"), "");
+  const classes = $$("input[name=cls]:checked").map(c => c.value);
+  if (status && status.dataset && !confirm("Building a new dataset replaces the current one. Trained models stay until you retrain. Continue?")) return;
+  try {
+    const d = await api("/api/jobs/dataset", { json: { classes, include_other: $("#other").checked, per_class: +$("#per").value, holdout: +$("#ho").value, cutoff: $("#cut").value } });
+    watch(d.job_id, "Building dataset from UniProt");
+  } catch (e) { showMsg($("#bmsg"), e.message); }
+};
+$("#train").onclick = async () => {
+  showMsg($("#tmsg"), "");
+  try {
+    const backend = $("input[name=backend]:checked").value;
+    const d = await api("/api/jobs/train", { json: { backend, trees: +$("#trees").value, align: $("#align").checked } });
+    watch(d.job_id, "Training: " + NAMES[backend]);
+  } catch (e) { showMsg($("#tmsg"), e.message); }
+};
+refresh().then(s => { if (s.running) watch(s.running.id, s.running.kind === "dataset" ? "Building dataset from UniProt" : "Training and evaluating"); })
+  .catch(e => showMsg($("#bmsg"), e.message));
+</script>
+{% endblock %}

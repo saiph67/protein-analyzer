@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Learn · Protein Analyzer{% endblock %}
+{% block head %}<script src="{{ url_for('static', filename='lessons.js') }}"></script>{% endblock %}
+{% block content %}
+<div id="root"></div>
+{% endblock %}
+{% block scripts %}
+<script>
+const KEY = "pa_lessons";
+const progress = () => { try { return JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { return {}; } };
+const saveProgress = p => { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch (e) {} };
+
+function home() {
+  const p = progress();
+  $("#root").innerHTML = `<h1>Learn</h1><p class="sub">Short guided lessons using real proteins and live data. Each one mixes explanations, the app's tools and quiz questions.
+    Your progress is saved in this browser. Teachers: open a lesson and use <b>Print worksheet</b> for a handout without the answers.</p>
+    <div class="grid2">${LESSONS.map(l => {
+      const st = p[l.id] || {}, nq = l.steps.filter(s => s.quiz).length, right = Object.values(st).filter(v => v === true).length;
+      return `<div class="card"><h2><a class="lesson-title" href="#${l.id}">${esc(l.title)}</a></h2><p class="muted small">${esc(l.level)} · ~${l.minutes} min · ${nq} questions
+        ${Object.keys(st).length ? ` · <span class="${right === nq ? "done-badge" : ""}">${right}/${nq} correct</span>` : ""}</p><p>${esc(l.intro)}</p>
+        <a class="btn" href="#${l.id}">${Object.keys(st).length ? "Continue" : "Start"}</a></div>`;
+    }).join("")}</div>`;
+}
+
+function lesson(l) {
+  const st = progress()[l.id] || {};
+  let qn = 0;
+  $("#root").innerHTML = `<p class="noprint"><a href="#">← All lessons</a></p>
+    <div class="card"><div class="row" style="justify-content:space-between"><h1 style="margin:0">${esc(l.title)}</h1>
+      <span class="row noprint"><button class="secondary" id="ws">Print worksheet</button><button class="secondary" id="reset">Reset answers</button></span></div>
+      <p class="muted small">${esc(l.level)} · ~${l.minutes} min</p><p>${esc(l.intro)}</p>
+    ${l.steps.map((s, i) => {
+      if (s.text) return `<div class="lesson-step">${s.text}</div>`;
+      if (s.demo) return `<div class="lesson-step"><p><b>Try it:</b> ${esc(s.demo.caption)}</p><div class="demo" data-i="${i}"><span class="spinner"></span> Loading live data…</div></div>`;
+      qn++;
+      const q = s.quiz, ans = st[i];
+      return `<div class="lesson-step quiz" data-i="${i}"><p><b>Question ${qn}.</b> ${esc(q.q)}</p>
+        ${q.options.map((o, k) => `<label class="${ans !== undefined ? (k === q.answer ? "right" : "") : ""}"><input type="radio" name="q${i}" value="${k}" ${ans !== undefined ? "disabled" : ""}> ${esc(o)}</label>`).join("")}
+        <div class="why small noprint">${ans !== undefined ? `<p>${ans ? "✅ Correct." : "❌ Not quite."} ${esc(q.why)}</p>` : ""}</div></div>`;
+    }).join("")}
+    <p class="muted small noprint" id="score"></p></div>`;
+  $$(".quiz").forEach(div => {
+    const i = +div.dataset.i, q = l.steps[i].quiz;
+    $$("input", div).forEach(inp => inp.onchange = () => {
+      const k = +inp.value, ok = k === q.answer;
+      $$("label", div).forEach((lab, j) => { lab.classList.toggle("right", j === q.answer); lab.classList.toggle("wrong", j === k && !ok); $("input", lab).disabled = true; });
+      $(".why", div).innerHTML = `<p>${ok ? "✅ Correct." : "❌ Not quite."} ${esc(q.why)}</p>`;
+      const p = progress(); p[l.id] = { ...(p[l.id] || {}), [i]: ok }; saveProgress(p); score(l);
+    });
+  });
+  $("#ws").onclick = () => print();
+  $("#reset").onclick = () => { const p = progress(); delete p[l.id]; saveProgress(p); lesson(l); };
+  score(l);
+  $$(".demo").forEach(el => runDemo(el, l.steps[+el.dataset.i].demo));
+}
+
+function score(l) {
+  const st = progress()[l.id] || {}, nq = l.steps.filter(s => s.quiz).length, done = Object.keys(st).length, right = Object.values(st).filter(Boolean).length;
+  $("#score").innerHTML = done === nq ? `<span class="done-badge">Lesson complete: ${right}/${nq} correct.</span> <a href="#">Back to lessons</a>` : `${done}/${nq} questions answered.`;
+}
+
+async function runDemo(el, d) {
+  try {
+    if (d.kind === "protein") {
+      const e = await api("/api/protein/" + d.acc);
+      el.innerHTML = `<p class="small"><a href="/protein/${d.acc}" target="_blank">${esc(e.name)} (${d.acc}) ↗ full page</a></p><div></div>`;
+      mountAnalysis(el.lastElementChild, e.analysis, { showSequence: false });
+    } else if (d.kind === "compare") {
+      const r = await api("/api/compare", { json: { a: d.a, b: d.b, mode: "global" } });
+      el.innerHTML = `<div class="stats"><div class="stat"><div class="k">Identity${tip("identity")}</div><div class="v">${r.identity}%</div></div>
+        <div class="stat"><div class="k">Similarity${tip("similarity")}</div><div class="v">${r.similarity}%</div></div><div class="stat"><div class="k">Gaps</div><div class="v">${r.gaps}</div></div></div>
+        <p class="small"><a href="/compare?a=${d.a}&b=${d.b}" target="_blank">See the full alignment ↗</a></p>`;
+    } else if (d.kind === "mutation") {
+      const r = await api("/api/mutate", { json: { accession: d.acc, mutation: d.m } });
+      el.innerHTML = `<div class="stats"><div class="stat"><div class="k">Change</div><div class="v" style="font-size:1rem">${esc(r.from_name)} → ${esc(r.to_name)}</div><small class="muted">${esc(r.from_group)} → ${esc(r.to_group)}</small></div>
+        <div class="stat"><div class="k">BLOSUM62${tip("blosum")}</div><div class="v">${r.blosum62}</div></div>
+        <div class="stat"><div class="k">AlphaMissense${tip("am")}</div><div class="v">${r.alphamissense == null ? "–" : r.alphamissense.toFixed(2)}</div><small class="muted">${esc(r.alphamissense_class || "")}</small></div></div>
+        ${r.known_variants.filter(v => v.to === r.to).map(v => `<div class="msg info small">UniProt: ${esc(v.description)}</div>`).join("")}
+        <p class="small"><a href="/mutate?acc=${d.acc}&m=${d.m}" target="_blank">Open in the mutation explorer ↗</a></p>`;
+    }
+  } catch (e) { el.innerHTML = `<div class="msg warn">Couldn't load live data (${esc(e.message)}). The lesson still works; try again later.</div>`; }
+}
+
+function route() { const l = LESSONS.find(x => x.id === location.hash.slice(1)); l ? lesson(l) : home(); scrollTo(0, 0); }
+addEventListener("hashchange", route); route();
+</script>
+{% endblock %}

@@ -1,0 +1,5 @@
+# Optional: enables the ESM-2 language-model classifier (~250 MB CPU-only install + ~140 MB model download).
+# CPU-only PyTorch (much smaller than the default CUDA build):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements-esm.txt
+transformers>=4.40

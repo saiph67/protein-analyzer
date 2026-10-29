@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block kind %}superposition{% endblock %}
+{% block title %}Compare structures · Protein Analyzer{% endblock %}
+{% block head %}<script src="{{ url_for('static', filename='vendor/3Dmol-min.js') }}" defer></script>{% endblock %}
+{% block content %}
+<h1>Compare proteins</h1>
+<nav class="subtabs"><a href="/compare">Two proteins</a><a href="/align">Many proteins + family tree</a><a class="on" href="/structures">3D structures</a></nav>
+<p class="sub">Overlay the AlphaFold structures of two proteins to see whether they share a 3D shape, even when their sequences look different.</p>
+<div class="card noprint">
+  <div class="row" style="align-items:flex-end">
+    <label class="field grow">Protein A (UniProt accession) <input type="text" id="a" placeholder="P69905"></label>
+    <label class="field grow">Protein B <input type="text" id="b" placeholder="P02144"></label>
+    <button id="go">Superpose</button>
+  </div>
+  <div class="row" style="margin-top:8px"><span class="muted small">Examples:</span>
+    <button class="pill" data-ex="P69905 P02144">haemoglobin α vs myoglobin (25% identical)</button>
+    <button class="pill" data-ex="P69905 P68871">haemoglobin α vs β</button>
+    <button class="pill" data-ex="P69905 P42212">haemoglobin vs GFP (unrelated)</button></div>
+  <div id="recent" class="recent"></div>
+  <div id="msg"></div>
+</div>
+<div id="out"></div>
+{% endblock %}
+{% block scripts %}
+<script>
+const qs = new URLSearchParams(location.search);
+if (qs.get("a")) $("#a").value = qs.get("a"); if (qs.get("b")) $("#b").value = qs.get("b");
+renderRecent($("#recent"), acc => { (!$("#a").value.trim() ? $("#a") : $("#b")).value = acc; }, "Recent (click to fill A, then B):");
+$$("[data-ex]").forEach(b => b.onclick = () => { [$("#a").value, $("#b").value] = b.dataset.ex.split(" "); $("#go").click(); });
+let R = null, viewer = null, show = { a: true, b: true };
+$("#go").onclick = async () => {
+  showMsg($("#msg"), ""); $("#out").innerHTML = ""; busy($("#go"), true, "Fetching structures & superposing");
+  try {
+    R = await api("/api/superpose", { json: { a: $("#a").value, b: $("#b").value } });
+    addRecent(R.accession_a, R.name_a.replace(R.accession_a, "").trim()); addRecent(R.accession_b, R.name_b.replace(R.accession_b, "").trim());
+    render();
+  } catch (e) { showMsg($("#msg"), e.message); }
+  finally { busy($("#go"), false); }
+};
+
+function verdict(tm) {
+  return tm >= 0.5 ? "same overall fold: these proteins share a 3D shape" + (R.sequence_identity < 30 ? ", even though their sequences are in the 'twilight zone'. Structure is conserved longer than sequence." : ".")
+    : tm >= 0.3 ? "partly similar: some shared elements, but probably different folds." : "different shapes: no meaningful structural similarity.";
+}
+
+function render() {
+  const tm = Math.max(R.tm_score_a, R.tm_score_b), fa = R.features_a, fb = R.features_b;
+  $("#out").innerHTML = `<div class="card">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(R.name_a)} <span style="color:#2563eb">■</span> vs ${esc(R.name_b)} <span style="color:#f59e0b">■</span></h2>
+      <span class="row noprint">${saveButton()}<button class="secondary" onclick="print()">Print / Save as PDF</button></span></div>
+    <div class="stats">
+      <div class="stat"><div class="k">TM-score${tip("tmscore")}</div><div class="v">${tm.toFixed(2)}</div><small class="muted">A: ${R.tm_score_a} · B: ${R.tm_score_b}</small></div>
+      <div class="stat"><div class="k">Core RMSD${tip("rmsd")}</div><div class="v">${R.rmsd_core == null ? "–" : R.rmsd_core + " Å"}</div><small class="muted">${R.core_pairs} residues within 4 Å</small></div>
+      <div class="stat"><div class="k">RMSD, all aligned</div><div class="v">${R.rmsd_all} Å</div><small class="muted">${R.aligned_pairs} pairs</small></div>
+      <div class="stat"><div class="k">Sequence identity${tip("identity")}</div><div class="v">${R.sequence_identity}%</div></div>
+    </div>
+    <p><b>Verdict:</b> ${verdict(tm)}</p>
+    <div class="row noprint" style="margin-bottom:6px"><button class="secondary" id="ta">Hide A</button><button class="secondary" id="tb">Hide B</button><button class="secondary" id="rs">Reset view</button>
+      <span class="muted small">Residues paired by sequence alignment, then overlaid by least squares on the confident core (pLDDT ≥ 70).</span></div>
+    <div class="viewer noprint" id="viewer"></div>
+    <h3>Distance between matched residues after overlay</h3>
+    ${distChart(R.per_residue)}
+    <h3>Secondary structure${tip("ss")}</h3>
+    <table class="small"><thead><tr><th></th><th>Helix</th><th>Strand</th><th>Disordered${tip("disorder")}</th><th>Mean pLDDT</th></tr></thead><tbody>
+      <tr><td>A</td><td>${fa.helix_percent}%</td><td>${fa.strand_percent}%</td><td>${fa.disordered_percent}%</td><td>${fmt(R.plddt_a, 1)}</td></tr>
+      <tr><td>B</td><td>${fb.helix_percent}%</td><td>${fb.strand_percent}%</td><td>${fb.disordered_percent}%</td><td>${fmt(R.plddt_b, 1)}</td></tr></tbody></table>
+    ${ssTrack("A", fa)}${ssTrack("B", fb)}</div>`;
+  const sb = $("#out .save-btn");
+  if (sb) sb.onclick = () => saveToProject("superposition", `${R.accession_a} vs ${R.accession_b} (3D)`,
+    { name_a: R.name_a, name_b: R.name_b, tm_score: tm, rmsd_core: R.rmsd_core, core_pairs: R.core_pairs, sequence_identity: R.sequence_identity, accession_a: R.accession_a, accession_b: R.accession_b });
+  draw();
+  $("#ta").onclick = () => { show.a = !show.a; $("#ta").textContent = show.a ? "Hide A" : "Show A"; style(); };
+  $("#tb").onclick = () => { show.b = !show.b; $("#tb").textContent = show.b ? "Hide B" : "Show B"; style(); };
+  $("#rs").onclick = () => { viewer.zoomTo(); viewer.render(); };
+}
+
+function distChart(rows) {
+  const W = 760, H = 140, L = 34, T = 8, B = 20, max = Math.min(20, Math.max(5, ...rows.map(r => r.distance)));
+  const n = rows.length, X = i => L + (W - L - 6) * i / Math.max(n - 1, 1), Y = d => T + (H - T - B) * (1 - Math.min(d, max) / max);
+  let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Per-residue distance">`;
+  for (const t of [0, 2, 4, 8, 16].filter(t => t <= max)) s += `<line class="axis" x1="${L}" x2="${W}" y1="${Y(t)}" y2="${Y(t)}"/><text x="${L - 4}" y="${Y(t) + 4}" text-anchor="end">${t}</text>`;
+  s += `<line class="thr" x1="${L}" x2="${W}" y1="${Y(4)}" y2="${Y(4)}"/>`;
+  s += `<polyline class="line" points="${rows.map((r, i) => `${X(i).toFixed(1)},${Y(r.distance).toFixed(1)}`).join(" ")}"/>`;
+  s += `<text x="${L}" y="${H - 4}">A residue ${rows[0].a}</text><text x="${W}" y="${H - 4}" text-anchor="end">A residue ${rows[n - 1].a}</text>`;
+  return s + `</svg><p class="muted small">Ångströms (capped at ${max}). Below the dashed line (4 Å) the two structures match closely.</p>`;
+}
+
+function ssTrack(label, f) {
+  const n = f.secondary_structure.length, W = 760, L = 20, X = i => L + (W - L - 6) * i / n;
+  let s = `<svg class="tracks" viewBox="0 0 ${W} 26" aria-label="Secondary structure ${label}"><text x="0" y="16">${label}</text><rect class="lane" x="${L}" y="11" width="${W - L - 6}" height="4"/>`;
+  for (const [a, b] of f.helices) s += `<rect x="${X(a - f.first_residue)}" y="5" width="${Math.max(X(b - f.first_residue + 1) - X(a - f.first_residue), 1.5)}" height="16" rx="3" fill="#ef4444"><title>helix ${a}–${b}</title></rect>`;
+  for (const [a, b] of f.strands) s += `<rect x="${X(a - f.first_residue)}" y="7" width="${Math.max(X(b - f.first_residue + 1) - X(a - f.first_residue), 1.5)}" height="12" fill="#f59e0b"><title>strand ${a}–${b}</title></rect>`;
+  for (const [a, b] of f.disordered) s += `<rect x="${X(a - f.first_residue)}" y="22" width="${Math.max(X(b - f.first_residue + 1) - X(a - f.first_residue), 1.5)}" height="3" fill="#94a3b8"><title>disordered ${a}–${b}</title></rect>`;
+  return s + `</svg>`;
+}
+
+async function draw() {
+  await new Promise((ok, fail) => { let n = 0; const t = setInterval(() => { if (window.$3Dmol) { clearInterval(t); ok(); } else if (++n > 100) { clearInterval(t); fail(); } }, 50); });
+  viewer = $3Dmol.createViewer($("#viewer"), { backgroundColor: getComputedStyle(document.body).backgroundColor });
+  viewer.addModel(R.pdb_a, "pdb"); viewer.addModel(R.pdb_b_transformed, "pdb");
+  style(); viewer.zoomTo(); viewer.render();
+}
+function style() {
+  viewer.setStyle({ model: 0 }, show.a ? { cartoon: { color: "#2563eb" } } : {});
+  viewer.setStyle({ model: 1 }, show.b ? { cartoon: { color: "#f59e0b", opacity: 0.85 } } : {});
+  viewer.render();
+}
+if (qs.get("a") && qs.get("b")) $("#go").click();
+</script>
+{% endblock %}

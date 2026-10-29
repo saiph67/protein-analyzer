@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block kind %}digest{% endblock %}
+{% block title %}Lab tools · Protein Analyzer{% endblock %}
+{% block content %}
+<h1>Lab tools</h1>
+<nav class="subtabs" id="tabs">
+  <a href="#translate">DNA → protein</a><a href="#digest">Protease digest &amp; peptide masses</a><a href="#a280">A280 concentration</a>
+</nav>
+
+<section id="translate" class="tab-pane">
+  <p class="sub">Translate DNA or RNA in all six reading frames and find open reading frames (ORFs): stretches that start with a
+    start codon and run to a stop codon, i.e. candidate genes.</p>
+  <div class="card noprint">
+    <textarea id="dna" placeholder="Paste DNA/RNA (FASTA is fine), e.g. ATGGTGCACCTGACTCCTGAGGAG..."></textarea>
+    <div class="row" style="margin-top:10px; align-items:flex-end">
+      <label class="field">Genetic code <select id="code" style="width:auto">{% for k, v in codes.items() %}<option value="{{ k }}">{{ k }}: {{ v }}</option>{% endfor %}</select></label>
+      <label class="field">Min ORF length (aa) <input type="number" id="minaa" value="50" min="10" max="5000"></label>
+      <label style="margin-bottom:8px"><input type="checkbox" id="alt"> allow alternative start codons (GTG, TTG…)</label>
+      <button id="tgo">Translate</button><button class="secondary" id="tex">Example</button>
+    </div>
+    <div id="tmsg"></div>
+  </div>
+  <div id="tout"></div>
+</section>
+
+<section id="digest" class="tab-pane">
+  <p class="sub">Simulate cutting a protein with an enzyme, as before mass spectrometry, and list the peptides with their masses and m/z values.</p>
+  <div class="card noprint">
+    <div class="row" style="align-items:flex-end">
+      <label class="field grow">Protein: UniProt accession or sequence <input type="text" id="dprot" placeholder="P02769 (bovine serum albumin)"></label>
+      <label class="field" style="max-width:100%">Enzyme <select id="enz" style="width:auto; max-width:100%">{% for k, v in enzymes.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
+    </div>
+    <div class="row" style="margin-top:8px; align-items:flex-end">
+      <label class="field">Missed cleavages <select id="missed" style="width:auto"><option>0</option><option selected>1</option><option>2</option></select></label>
+      <label class="field">Length <span class="row" style="gap:4px"><input type="number" id="lmin" value="6" style="width:70px">–<input type="number" id="lmax" value="40" style="width:70px"></span></label>
+      <label class="field">Mass (Da) <span class="row" style="gap:4px"><input type="number" id="mmin" value="500" style="width:90px">–<input type="number" id="mmax" value="4500" style="width:90px"></span></label>
+      <label style="margin-bottom:8px"><input type="checkbox" id="cam" checked> Cys carbamidomethylated (+57.021)</label><span id="camtip" style="margin-bottom:8px"></span>
+      <button id="dgo">Digest</button><button class="secondary" id="dex">Example</button>
+    </div>
+    <div id="dmsg"></div>
+  </div>
+  <div id="dout"></div>
+</section>
+
+<section id="a280" class="tab-pane">
+  <p class="sub">Work out a protein's concentration from its absorbance at 280 nm, using its extinction coefficient (calculated from its W, Y and C content).</p>
+  <div class="card noprint">
+    <div class="row" style="align-items:flex-end">
+      <label class="field grow">Protein: UniProt accession or sequence <input type="text" id="aprot" placeholder="P02769"></label>
+      <label class="field">Measured A280 <input type="number" id="abs" step="0.001" placeholder="0.650"></label>
+      <label class="field">Path length (cm) <input type="number" id="path" value="1" step="0.01"></label>
+      <label class="field">Dilution factor <input type="number" id="dil" value="1" step="any"></label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label><input type="radio" name="cys" value="1" checked> folded protein (cysteines form disulfides)</label>
+      <label><input type="radio" name="cys" value="0"> reduced (e.g. with DTT)</label>
+      <button id="ago">Calculate</button><button class="secondary" id="aex">Example</button>
+    </div>
+    <div id="amsg"></div>
+  </div>
+  <div id="aout"></div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+$("#camtip").innerHTML = tip("cam");
+{ const p = new URLSearchParams(location.search).get("prot"); if (p) { $("#dprot").value = p; $("#aprot").value = p; } }
+function showTab() {
+  const id = ["translate", "digest", "a280"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "translate";
+  $$(".tab-pane").forEach(s => s.style.display = s.id === id ? "" : "none");
+  $$("#tabs a").forEach(a => a.classList.toggle("on", a.getAttribute("href") === "#" + id));
+}
+addEventListener("hashchange", showTab); showTab();
+const proteinActions = (seq, name) => `<a href="#" class="act" data-to="analyze">Analyze</a> · <a href="#" class="act" data-to="classify">Classify</a> · <a href="#" class="act" data-to="blast">BLAST</a> · <a href="#" class="act" data-to="digest">Digest</a>`;
+document.addEventListener("click", e => {
+  const a = e.target.closest(".act"); if (!a) return;
+  e.preventDefault();
+  const seq = a.closest("[data-seq]").dataset.seq, name = a.closest("[data-seq]").dataset.name;
+  if (a.dataset.to === "digest") { $("#dprot").value = seq; $("#dprot").dataset.name = name; location.hash = "digest"; return; }
+  sessionStorage.setItem("pa_handoff", `>${name}\n${seq}`);
+  location.href = a.dataset.to === "blast" ? "/blast?handoff=1" : `/${a.dataset.to}?handoff=1`;
+});
+
+// ---------- translate
+$("#tex").onclick = () => { $("#dna").value = ">HBB coding sequence (human haemoglobin beta)\nATGGTGCATCTGACTCCTGAGGAGAAGTCTGCCGTTACTGCCCTGTGGGGCAAGGTGAACGTGGATGAAGTTGGTGGTGAGGCCCTGGGCAGGCTGCTGGTGGTCTACCCTTGGACCCAGAGGTTCTTTGAGTCCTTTGGGGATCTGTCCACTCCTGATGCTGTTATGGGCAACCCTAAGGTGAAGGCTCATGGCAAGAAAGTGCTCGGTGCCTTTAGTGATGGCCTGGCTCACCTGGACAACCTCAAGGGCACCTTTGCCACACTGAGTGAGCTGCACTGTGACAAGCTGCACGTGGATCCTGAGAACTTCAGGCTCCTGGGCAACGTGCTGGTCTGTGTGCTGGCCCATCACTTTGGCAAAGAATTCACCCCACCAGTGCAGGCTGCCTATCAGAAAGTGGTGGCTGGTGTGGCTAATGCCCTGGCCCACAAGTATCACTAA"; };
+$("#tgo").onclick = async () => {
+  showMsg($("#tmsg"), ""); $("#tout").innerHTML = ""; busy($("#tgo"), true, "Translating");
+  try {
+    const r = await api("/api/lab/translate", { json: { dna: $("#dna").value, code: +$("#code").value, min_aa: +$("#minaa").value, alt_starts: $("#alt").checked } });
+    const fr = r.frames.map(f => `<div><b class="mono">${f.strand}${f.frame}</b> <span class="mono small" style="overflow-wrap:anywhere">${esc(f.protein.slice(0, 300)).replace(/\*/g, '<b style="color:var(--err)">*</b>')}${f.protein.length > 300 ? "…" : ""}</span></div>`).join("");
+    $("#tout").innerHTML = `<div class="card"><div class="stats">
+        <div class="stat"><div class="k">Length</div><div class="v">${r.stats.length.toLocaleString()} <small>nt</small></div></div>
+        <div class="stat"><div class="k">GC content${tip("gc")}</div><div class="v">${r.stats.gc_percent}%</div></div>
+        <div class="stat"><div class="k">ORFs ≥ ${$("#minaa").value} aa</div><div class="v">${r.n_orfs}</div></div>
+        <div class="stat"><div class="k">Genetic code</div><div class="v" style="font-size:.95rem">${esc(r.code_name)}</div></div></div>
+      ${r.stats.ambiguous ? `<div class="msg warn">${r.stats.ambiguous} ambiguous base(s) (N, R, Y…) translate as X.</div>` : ""}
+      <h3>Open reading frames${tip("orf")}</h3>
+      ${r.orfs.length ? `<div class="table-wrap"><table><thead><tr><th>#</th><th>Strand/frame</th><th>Position (nt)</th><th>Length</th><th>Start</th><th>Complete?</th><th>Protein</th><th></th></tr></thead><tbody>
+        ${r.orfs.map((o, i) => `<tr data-seq="${esc(o.protein)}" data-name="ORF${i + 1}_${o.strand}${o.frame}_${o.start}-${o.end}"><td>${i + 1}</td><td class="mono">${o.strand}${o.frame}</td><td>${o.start.toLocaleString()}–${o.end.toLocaleString()}</td><td>${o.length_aa} aa</td><td class="mono">${o.start_codon}</td>
+          <td>${o.complete ? "yes" : '<span class="pill warn">no stop</span>'}</td><td class="mono small" style="max-width:280px; overflow-wrap:anywhere">${esc(o.protein.slice(0, 60))}${o.protein.length > 60 ? "…" : ""}</td><td class="small" style="white-space:nowrap">${proteinActions()}</td></tr>`).join("")}
+      </tbody></table></div>${r.n_orfs > 100 ? `<p class="muted small">Showing the 100 longest of ${r.n_orfs}.</p>` : ""}` : `<p class="muted">No ORFs of at least ${$("#minaa").value} amino acids. Try a lower minimum.</p>`}
+      <h3>Six-frame translation</h3><div class="small" style="display:grid; gap:4px">${fr}</div>
+      <p class="muted small">* = stop codon. "+" frames read the sequence as given; "−" frames read the reverse complement (the other DNA strand).</p></div>`;
+  } catch (e) { showMsg($("#tmsg"), e.message); }
+  finally { busy($("#tgo"), false); }
+};
+
+// ---------- digest
+$("#dex").onclick = () => { $("#dprot").value = "P02769"; $("#enz").value = "trypsin"; delete $("#dprot").dataset.name; };
+$("#dprot").oninput = () => { delete $("#dprot").dataset.name; };
+$("#dgo").onclick = async () => {
+  showMsg($("#dmsg"), ""); $("#dout").innerHTML = ""; busy($("#dgo"), true, "Digesting");
+  try {
+    const r = await api("/api/lab/digest", { json: { text: $("#dprot").value, name: $("#dprot").dataset.name || "", enzyme: $("#enz").value, missed: +$("#missed").value,
+      min_len: +$("#lmin").value, max_len: +$("#lmax").value, min_mass: +$("#mmin").value, max_mass: +$("#mmax").value, cam: $("#cam").checked } });
+    const ok = r.peptides.filter(p => p.in_range);
+    const cov = new Array(r.length).fill(false); ok.forEach(p => { for (let i = p.start - 1; i < p.end; i++) cov[i] = true; });
+    let covHtml = ""; for (let i = 0; i < r.length; i++) covHtml += cov[i] ? 1 : 0;
+    $("#dout").innerHTML = `<div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(r.name)} · ${esc(r.description)}</h2>
+      <span class="row noprint"><button class="secondary" id="dcsv">Download CSV</button><button class="secondary" onclick="print()">Print / Save as PDF</button></span></div>
+      <div class="stats"><div class="stat"><div class="k">Cleavage sites</div><div class="v">${r.sites}</div></div>
+        <div class="stat"><div class="k">Peptides in range</div><div class="v">${r.n_in_range}</div><small class="muted">of ${r.peptides.length}</small></div>
+        <div class="stat"><div class="k">Sequence coverage${tip("coverage_ms")}</div><div class="v">${r.coverage}%</div></div></div>
+      ${coverageBar(cov)}
+      <div class="table-wrap" style="max-height:520px; overflow:auto"><table><thead><tr><th>Position</th><th>Peptide</th><th>Missed</th><th>Mono mass${tip("mono")}</th><th>[M+H]⁺</th><th>[M+2H]²⁺</th><th>[M+3H]³⁺</th></tr></thead><tbody>
+        ${ok.map(p => `<tr><td>${p.start}–${p.end}</td><td class="mono">${esc(p.sequence)}</td><td>${p.missed}</td><td>${p.mono.toFixed(4)}</td><td>${p.mz1.toFixed(4)}</td><td>${p.mz2.toFixed(4)}</td><td>${p.mz3.toFixed(4)}</td></tr>`).join("")}
+      </tbody></table></div><p class="muted small">Only peptides within your length and mass limits are listed (the CSV has all). Masses are monoisotopic${r.carbamidomethyl ? ", with cysteines carbamidomethylated (+57.0215 Da)" : ""}.</p></div>`;
+    $("#dcsv").onclick = () => downloadCsv(`digest_${r.enzyme}.csv`, "digest", ["start", "end", "sequence", "missed", "length", "mono", "average", "mz1", "mz2", "mz3", "in_range"],
+      r.peptides.map(p => [p.start, p.end, p.sequence, p.missed, p.length, p.mono, p.average, p.mz1, p.mz2, p.mz3, p.in_range]));
+  } catch (e) { showMsg($("#dmsg"), e.message); }
+  finally { busy($("#dgo"), false); }
+};
+function coverageBar(cov) {
+  const W = 760, L = cov.length; let s = `<svg class="chart" viewBox="0 0 ${W} 26" aria-label="Sequence coverage"><rect x="0" y="6" width="${W}" height="10" rx="3" fill="var(--bg)" stroke="var(--border)"/>`;
+  let i = 0; while (i < L) { if (cov[i]) { let j = i; while (j < L && cov[j]) j++; s += `<rect x="${W * i / L}" y="6" width="${Math.max(W * (j - i) / L, 1)}" height="10" fill="var(--ok)"><title>covered ${i + 1}–${j}</title></rect>`; i = j; } else i++; }
+  return s + `<text x="0" y="25">1</text><text x="${W}" y="25" text-anchor="end">${L}</text></svg>`;
+}
+
+// ---------- A280
+$("#aex").onclick = () => { $("#aprot").value = "P02769"; $("#abs").value = "0.650"; $("#dil").value = "10"; };
+$("#ago").onclick = async () => {
+  showMsg($("#amsg"), ""); $("#aout").innerHTML = ""; busy($("#ago"), true, "Calculating");
+  try {
+    const cys = $("input[name=cys]:checked").value === "1";
+    const r = await api("/api/lab/a280", { json: { text: $("#aprot").value, a280: $("#abs").value, path_cm: +$("#path").value, dilution: +$("#dil").value, cystines: cys } });
+    const c = r.concentration;
+    $("#aout").innerHTML = `<div class="card"><h2>${esc(r.name)}</h2>
+      ${r.warning ? `<div class="msg warn">${esc(r.warning)}</div>` : ""}
+      <div class="stats">
+        <div class="stat"><div class="k">ε280${tip("epsilon")}</div><div class="v">${(cys ? r.epsilon_cystines : r.epsilon_reduced).toLocaleString()}</div><small class="muted">M⁻¹ cm⁻¹ (${cys ? "with disulfides" : "reduced"})</small></div>
+        <div class="stat"><div class="k">Abs 0.1% (1 mg/mL)</div><div class="v">${cys ? r.abs_0_1pct_cystines : r.abs_0_1pct_reduced}</div></div>
+        <div class="stat"><div class="k">Mol. weight</div><div class="v">${fmt(r.molecular_weight / 1000, 2)} <small>kDa</small></div></div>
+        <div class="stat"><div class="k">W / Y / C</div><div class="v">${r.W} / ${r.Y} / ${r.C}</div></div>
+        ${c ? `<div class="stat"><div class="k">Concentration</div><div class="v">${c.mg_per_ml} <small>mg/mL</small></div><small class="muted">${c.micromolar} µM</small></div>` : ""}
+      </div>
+      ${c && c.warning ? `<div class="msg warn">${esc(c.warning)}</div>` : ""}
+      <p class="muted small">ε = 5500 × W + 1490 × Y${cys ? " + 125 × (number of disulfides)" : ""} (Pace et al. 1995, as in ExPASy ProtParam). Concentration = A280 ÷ (ε × path length) × dilution.
+        Note: UniProt sequences include signal peptides and pro-regions that the mature protein may have lost, which changes ε and MW slightly.</p></div>`;
+  } catch (e) { showMsg($("#amsg"), e.message); }
+  finally { busy($("#ago"), false); }
+};
+</script>
+{% endblock %}

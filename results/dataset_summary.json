@@ -1,0 +1,252 @@
+{
+  "cutoff": "2018-12-31",
+  "per_class": 400,
+  "holdout": 100,
+  "classes": {
+    "kinase": "KW-0418",
+    "protease": "KW-0645",
+    "ion_channel": "KW-0407",
+    "ribosomal_protein": "KW-0689",
+    "toxin": "KW-0800",
+    "dna_binding": "KW-0238",
+    "other": null
+  },
+  "base_filter": "reviewed:true AND fragment:false AND length:[50 TO 2000]",
+  "built": "2026-10-24T21:16:34",
+  "sampling": "proportional across taxonomic groups (bacteria, archaea, viruses, fungi, plants, mammals, other_animals, other_eukaryotes)",
+  "human_fraction": {
+    "dna_binding": 0.102,
+    "ion_channel": 0.197,
+    "kinase": 0.078,
+    "other": 0.094,
+    "protease": 0.145,
+    "ribosomal_protein": 0.017,
+    "toxin": 0.0
+  },
+  "counts": {
+    "dna_binding": {
+      "holdout": 100,
+      "train": 399
+    },
+    "ion_channel": {
+      "holdout": 68,
+      "train": 388
+    },
+    "kinase": {
+      "holdout": 100,
+      "train": 377
+    },
+    "other": {
+      "holdout": 100,
+      "train": 400
+    },
+    "protease": {
+      "holdout": 99,
+      "train": 396
+    },
+    "ribosomal_protein": {
+      "holdout": 96,
+      "train": 376
+    },
+    "toxin": {
+      "holdout": 100,
+      "train": 399
+    }
+  },
+  "availability": {
+    "kinase": {
+      "keyword": "KW-0418",
+      "train_strata_available": {
+        "bacteria": 14151,
+        "archaea": 801,
+        "viruses": 212,
+        "fungi": 895,
+        "plants": 1358,
+        "mammals": 1930,
+        "other_animals": 824,
+        "other_eukaryotes": 387
+      },
+      "train": 400,
+      "train_available": 20561,
+      "holdout_strata_available": {
+        "bacteria": 100,
+        "archaea": 14,
+        "viruses": 11,
+        "fungi": 78,
+        "plants": 61,
+        "mammals": 16,
+        "other_animals": 50,
+        "other_eukaryotes": 39
+      },
+      "holdout": 100,
+      "holdout_available": 369
+    },
+    "protease": {
+      "keyword": "KW-0645",
+      "train_strata_available": {
+        "bacteria": 5175,
+        "archaea": 284,
+        "viruses": 275,
+        "fungi": 1561,
+        "plants": 570,
+        "mammals": 1783,
+        "other_animals": 661,
+        "other_eukaryotes": 125
+      },
+      "train": 400,
+      "train_available": 10437,
+      "holdout_strata_available": {
+        "bacteria": 80,
+        "archaea": 6,
+        "viruses": 21,
+        "fungi": 55,
+        "plants": 32,
+        "mammals": 20,
+        "other_animals": 67,
+        "other_eukaryotes": 56
+      },
+      "holdout": 100,
+      "holdout_available": 337
+    },
+    "ion_channel": {
+      "keyword": "KW-0407",
+      "train_strata_available": {
+        "bacteria": 974,
+        "archaea": 38,
+        "viruses": 238,
+        "fungi": 23,
+        "plants": 150,
+        "mammals": 1107,
+        "other_animals": 351,
+        "other_eukaryotes": 13
+      },
+      "train": 400,
+      "train_available": 2894,
+      "holdout_strata_available": {
+        "bacteria": 3,
+        "archaea": 0,
+        "viruses": 2,
+        "fungi": 10,
+        "plants": 1,
+        "mammals": 23,
+        "other_animals": 26,
+        "other_eukaryotes": 4
+      },
+      "holdout": 69,
+      "holdout_available": 69
+    },
+    "ribosomal_protein": {
+      "keyword": "KW-0689",
+      "train_strata_available": {
+        "bacteria": 38106,
+        "archaea": 2755,
+        "viruses": 0,
+        "fungi": 919,
+        "plants": 2862,
+        "mammals": 787,
+        "other_animals": 747,
+        "other_eukaryotes": 904
+      },
+      "train": 400,
+      "train_available": 47083,
+      "holdout_strata_available": {
+        "bacteria": 5,
+        "archaea": 66,
+        "viruses": 0,
+        "fungi": 134,
+        "plants": 2,
+        "mammals": 78,
+        "other_animals": 1,
+        "other_eukaryotes": 0
+      },
+      "holdout": 100,
+      "holdout_available": 286
+    },
+    "toxin": {
+      "keyword": "KW-0800",
+      "train_strata_available": {
+        "bacteria": 350,
+        "archaea": 1,
+        "viruses": 14,
+        "fungi": 15,
+        "plants": 104,
+        "mammals": 4,
+        "other_animals": 3695,
+        "other_eukaryotes": 0
+      },
+      "train": 400,
+      "train_available": 4183,
+      "holdout_strata_available": {
+        "bacteria": 41,
+        "archaea": 0,
+        "viruses": 0,
+        "fungi": 18,
+        "plants": 11,
+        "mammals": 0,
+        "other_animals": 791,
+        "other_eukaryotes": 0
+      },
+      "holdout": 100,
+      "holdout_available": 861
+    },
+    "dna_binding": {
+      "keyword": "KW-0238",
+      "train_strata_available": {
+        "bacteria": 18073,
+        "archaea": 1044,
+        "viruses": 1509,
+        "fungi": 1680,
+        "plants": 2764,
+        "mammals": 5287,
+        "other_animals": 2619,
+        "other_eukaryotes": 300
+      },
+      "train": 400,
+      "train_available": 33285,
+      "holdout_strata_available": {
+        "bacteria": 236,
+        "archaea": 46,
+        "viruses": 61,
+        "fungi": 262,
+        "plants": 99,
+        "mammals": 47,
+        "other_animals": 188,
+        "other_eukaryotes": 25
+      },
+      "holdout": 100,
+      "holdout_available": 964
+    },
+    "other": {
+      "keyword": null,
+      "train_strata_available": {
+        "bacteria": 252213,
+        "archaea": 14432,
+        "viruses": 13074,
+        "fungi": 27656,
+        "plants": 27845,
+        "mammals": 53305,
+        "other_animals": 23409,
+        "other_eukaryotes": 6249
+      },
+      "train": 400,
+      "train_available": 418317,
+      "holdout_strata_available": {
+        "bacteria": 3023,
+        "archaea": 238,
+        "viruses": 678,
+        "fungi": 3780,
+        "plants": 2069,
+        "mammals": 880,
+        "other_animals": 1616,
+        "other_eukaryotes": 851
+      },
+      "holdout": 100,
+      "holdout_available": 13144
+    }
+  },
+  "warnings": [
+    "ion_channel: only 69 holdout entries available (wanted 100).",
+    "Removed 71 duplicate accessions/sequences."
+  ],
+  "n_total": 3398
+}

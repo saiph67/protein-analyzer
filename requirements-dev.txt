@@ -1,0 +1,5 @@
+# Optional tools for maintainers (not needed to run the app)
+pydssp>=0.9          # reference DSSP for benchmarks/ss_benchmark.py (pulls in torch)
+biopython>=1.80      # independent pI cross-check
+playwright>=1.40     # showcase/record_showcase.py (then: python -m playwright install chromium)
+imageio-ffmpeg>=0.4  # showcase video encoding

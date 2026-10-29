@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block kind %}analysis{% endblock %}
+{% block title %}Analyze · Protein Analyzer{% endblock %}
+{% block content %}
+<h1>Analyze sequences</h1>
+<p class="sub">Paste a protein sequence or FASTA (multiple records allowed), or upload a FASTA/text file (max 5 MB, 35,000 aa per sequence).
+  Hover the <span class="tip" style="cursor:default">i</span> icons for explanations.</p>
+<div class="card noprint">
+  <textarea id="seq" aria-label="Sequence or FASTA" placeholder=">my_protein&#10;MVLSPADKTNVKAAWGKVGAHAGEYGAEALERMFLSFPTTKTYFPHFDLSHGSAQVKGHGKKVADALTNAVAHVDDMPNALSALSDLHAHKLRVDPVNFKLLSHCLLVTLAAHLPAEFTPAVHASLDKFLASVSTVLTSKYR"></textarea>
+  <div class="row" style="margin-top:10px">
+    <button id="go">Analyze</button>
+    <label class="btn secondary">Upload file<input id="file" type="file" accept=".fa,.fasta,.faa,.txt,.seq" hidden></label>
+    <button class="secondary" id="example">Example</button>
+    <span class="muted" id="fname"></span>
+  </div>
+  <div id="msg"></div>
+</div>
+<div id="dl" class="row noprint" style="margin-bottom:12px; display:none">
+  <button class="secondary" id="csv">Download CSV</button>
+  <button class="secondary" id="json">Download JSON</button>
+  <button class="secondary" id="print">Print / Save as PDF</button>
+  <span class="muted" id="count"></span>
+</div>
+<div id="out"></div>
+{% endblock %}
+{% block scripts %}
+<script>
+let results = [];
+const EXAMPLE = `>sp|P69905|HBA_HUMAN Hemoglobin subunit alpha
+MVLSPADKTNVKAAWGKVGAHAGEYGAEALERMFLSFPTTKTYFPHFDLSHGSAQVKGHG
+KKVADALTNAVAHVDDMPNALSALSDLHAHKLRVDPVNFKLLSHCLLVTLAAHLPAEFTP
+AVHASLDKFLASVSTVLTSKYR
+>sp|P02945|BACR_HALSA Bacteriorhodopsin
+MLELLPTAVEGVSQAQITGRPEWIWLALGTALMGLGTLYFLVKGMGVSDPDAKKFYAITT
+LVPAIAFTMYLSMLLGYGLTMVPFGGEQNPIYWARYADWLFTTPLLLLDLALLVDADQGT
+ILALVGADGIMIGTGLVGALTKVYSYRFVWWAISTAAMLYILYVLFFGFTSKAESMRPEV
+ASTFKVLRNVTVVLWSAYPVVWLIGSEGAGIVPLNIETLLFMVLDVSAKVGFGLILLRSR
+AIFGEAEAPEPSAGDGAAATSD`;
+$("#example").onclick = () => { $("#seq").value = EXAMPLE; };
+$("#file").onchange = () => { const f = $("#file").files[0]; $("#fname").textContent = f ? f.name : ""; if (f) run(); };
+$("#go").onclick = run;
+$("#csv").onclick = () => downloadCsv("protein_analysis.csv", "analysis", ...analysisCsvParts(results));
+$("#json").onclick = () => downloadJson("protein_analysis.json", "analysis", results);
+$("#print").onclick = () => print();
+
+async function run() {
+  const btn = $("#go"); showMsg($("#msg"), "");
+  const f = $("#file").files[0];
+  if (f && f.size > 5 * 1024 * 1024) return showMsg($("#msg"), "File is larger than 5 MB.");
+  busy(btn, true, "Analyzing");
+  try {
+    let data;
+    if (f) {
+      const fd = new FormData(); fd.append("file", f);
+      data = await api("/api/analyze", { method: "POST", body: fd });
+      $("#file").value = ""; $("#fname").textContent = "";
+    } else {
+      data = await api("/api/analyze", { json: { text: $("#seq").value } });
+    }
+    results = data.records;
+    if (data.errors.length) showMsg($("#msg"), `${data.errors.length} record(s) skipped: ` + data.errors.map(e => `${e.name}: ${e.error}`).join(" | "), "warn");
+    $("#dl").style.display = "flex";
+    $("#count").textContent = `${results.length} sequence(s)`;
+    const out = $("#out"); out.innerHTML = "";
+    for (const r of results) {
+      const card = document.createElement("div"); card.className = "card";
+      card.innerHTML = `<div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(r.name)}</h2><span class="noprint">${saveButton()}</span></div><div></div>`;
+      out.appendChild(card);
+      mountAnalysis(card.lastElementChild, r);
+      const sb = $(".save-btn", card);
+      if (sb) sb.onclick = () => saveToProject("analysis", r.name, Object.fromEntries(Object.entries(r).filter(([k]) => k !== "hydropathy_profile")));
+    }
+  } catch (e) { showMsg($("#msg"), e.message); }
+  finally { busy(btn, false); }
+}
+</script>
+{% endblock %}

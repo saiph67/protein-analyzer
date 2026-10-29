@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block kind %}alignment{% endblock %}
+{% block title %}Align many · Protein Analyzer{% endblock %}
+{% block content %}
+<h1>Compare proteins</h1>
+<nav class="subtabs"><a href="/compare">Two proteins</a><a class="on" href="/align">Many proteins + family tree</a><a href="/structures">3D structures</a></nav>
+<p class="sub">Align 3–{{ max_seqs }} proteins (up to {{ "{:,}".format(max_len) }} aa each) and see how they are related. Enter UniProt accessions
+  (separated by spaces or new lines) or paste FASTA. Everything is computed on your computer.</p>
+<div class="card noprint">
+  <textarea id="t" style="min-height:110px" placeholder="P69905 P68871 P02042 P02100 P69891 P02144"></textarea>
+  <div id="recent" class="recent"></div>
+  <div class="row" style="margin-top:10px"><button id="go">Align &amp; build tree</button>
+    <button class="secondary" id="ex1">Example: globin family</button><button class="secondary" id="ex2">Example: insulin across species</button></div>
+  <div id="msg"></div>
+</div>
+<div id="out"></div>
+{% endblock %}
+{% block scripts %}
+<script>
+renderRecent($("#recent"), acc => { $("#t").value = ($("#t").value.trim() + " " + acc).trim(); }, "Recent (click to add):");
+const qs = new URLSearchParams(location.search);
+if (qs.get("accs")) $("#t").value = qs.get("accs");
+$("#ex1").onclick = () => { $("#t").value = "P69905 P68871 P02042 P02100 P69891 P02144"; };
+$("#ex2").onclick = () => { $("#t").value = "P01308 P01315 P01317 P01318 P01322 P01326"; };
+$("#go").onclick = run;
+let R = null;
+
+const CLASS = c => "AVILM".includes(c) ? "h" : "FWY".includes(c) ? "ar" : "KR".includes(c) ? "pos" : "DE".includes(c) ? "neg" :
+  "STNQH".includes(c) ? "p" : c === "G" ? "g" : c === "P" ? "pr" : c === "C" ? "c" : "";
+
+async function run() {
+  showMsg($("#msg"), ""); $("#out").innerHTML = "";
+  busy($("#go"), true, "Aligning (can take ~30 s)");
+  try {
+    R = await api("/api/msa", { json: { text: $("#t").value } });
+    R.names.forEach(n => { const a = n.split(" ")[0]; if (ACC_RE.test(a)) addRecent(a, n.split(" ").slice(1).join(" ")); });
+    render();
+  } catch (e) { showMsg($("#msg"), e.message); }
+  finally { busy($("#go"), false); }
+}
+
+function render() {
+  const n = R.names.length;
+  const cell = v => { const t = v / 100; return `background: rgba(37,99,235,${(0.08 + 0.7 * t).toFixed(2)}); color:${t > 0.6 ? "#fff" : "inherit"}`; };
+  const short = s => s.length > 18 ? s.slice(0, 17) + "…" : s;
+  $("#out").innerHTML = `
+  <div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Family tree</h2>
+    <span class="row noprint"><button class="secondary" id="nwk">Download tree (Newick)</button><button class="secondary" id="fa">Download alignment (FASTA)</button><button class="secondary" id="meth">Methods (.txt)</button>${saveButton()}<button class="secondary" onclick="print()">Print / Save as PDF</button></span></div>
+    <p class="muted small">Neighbour-joining tree from pairwise distances (Kimura-corrected), rooted at its midpoint. Proteins joined by short branches are closely related; branch length ≈ amino-acid changes per site.</p>
+    ${treeSvg(R.tree)}</div>
+  <div class="card"><h2>Percent identity${tip("identity")}</h2><div class="table-wrap"><table class="idgrid"><thead><tr><th></th>${R.names.map(x => `<th title="${esc(x)}">${esc(short(x))}</th>`).join("")}</tr></thead><tbody>
+    ${R.identity_matrix.map((row, i) => `<tr><th style="text-align:left" title="${esc(R.names[i])}">${esc(short(R.names[i]))}</th>${row.map(v => `<td style="${cell(v)}">${v.toFixed(0)}</td>`).join("")}</tr>`).join("")}
+  </tbody></table></div></div>
+  <div class="card"><h2>Multiple alignment <span class="muted small" style="font-weight:400">${R.length} columns · center sequence: ${esc(R.names[R.center])}</span></h2>
+    <p class="muted small">Coloured by chemistry: <span class="msa"><span class="h">hydrophobic</span> <span class="ar">aromatic</span> <span class="pos">+ charge</span> <span class="neg">− charge</span> <span class="p">polar</span> <span class="g">G</span> <span class="pr">P</span> <span class="c">C</span></span>.
+      Bottom row: <b>*</b> = identical in all, <b>:</b> = ≥ 70% the same. <label style="display:inline-flex;gap:4px;margin-left:8px"><input type="checkbox" id="colour" checked> colour</label></p>
+    <div class="msa" id="msa"></div></div>`;
+  drawMsa(true);
+  $("#colour").onchange = () => drawMsa($("#colour").checked);
+  $("#nwk").onclick = () => download("tree.nwk", R.newick + "\n");
+  $("#meth").onclick = () => downloadText("alignment_methods.txt", "alignment", "Proteins: " + R.names.join(", ") + "\nNewick: " + R.newick + "\n", "");
+  $("#fa").onclick = () => download("alignment.fasta", R.names.map((nm, i) => `>${nm}\n${R.rows[i].match(/.{1,60}/g).join("\n")}`).join("\n") + "\n");
+  const sb = $("#out .save-btn"); if (sb) sb.onclick = () => saveToProject("alignment", `Alignment of ${n} proteins`, { names: R.names, newick: R.newick, length: R.length, identity_matrix: R.identity_matrix, rows: R.rows });
+}
+
+function drawMsa(colour, width = 60) {
+  const w = Math.max(...R.names.map(n => Math.min(n.length, 22))) + 1;
+  const marks = R.conservation.map(c => c >= 0.999 ? "*" : c >= 0.7 ? ":" : " ").join("");
+  let out = "";
+  for (let i = 0; i < R.length; i += width) {
+    R.rows.forEach((row, k) => {
+      const seg = row.slice(i, i + width);
+      const body = colour ? [...seg].map(c => { const cl = CLASS(c); return cl ? `<span class="${cl}">${c}</span>` : esc(c); }).join("") : esc(seg);
+      out += `<span class="nm">${esc(R.names[k].slice(0, 22).padEnd(w))}</span>${body} <span class="nm">${i + seg.length}</span>\n`;
+    });
+    out += `<span class="cons">${"".padEnd(w)}${marks.slice(i, i + width)}</span>\n\n`;
+  }
+  $("#msa").innerHTML = out;
+}
+if (qs.get("accs")) run();
+</script>
+{% endblock %}

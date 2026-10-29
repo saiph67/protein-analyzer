@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block kind %}classification{% endblock %}
+{% block title %}Classify · Protein Analyzer{% endblock %}
+{% block content %}
+<h1>Classify new proteins</h1>
+<p class="sub">Predict the function class with a trained model. Paste a sequence, FASTA (up to 200 records) or a UniProt accession, or upload a FASTA file.</p>
+<div class="card noprint">
+  <textarea id="t" placeholder="P00533   or   >seq1&#10;MKT..." aria-label="Sequences or accession"></textarea>
+  <div id="recent" class="recent"></div>
+  <div class="row" style="margin-top:10px">
+    <button id="go">Classify</button>
+    <label class="btn secondary">Upload FASTA<input id="file" type="file" accept=".fa,.fasta,.faa,.txt" hidden></label>
+    <label class="row" style="gap:6px; flex-wrap:nowrap; max-width:100%; min-width:0">Model <select id="model" style="width:auto; max-width:100%; min-width:0; text-overflow:ellipsis"></select></label>
+    <span id="fname" class="muted"></span>
+  </div>
+  <p id="modelinfo" class="muted small" style="margin:8px 0 0"></p>
+  <div id="msg"></div>
+</div>
+<div id="summary"></div>
+<div id="out"></div>
+{% endblock %}
+{% block scripts %}
+<script>
+const p = new URLSearchParams(location.search);
+if (p.get("acc")) $("#t").value = p.get("acc");
+renderRecent($("#recent"), acc => { $("#t").value = acc; });
+let last = null, models = [];
+const NAMES = { handcrafted: "Hand-crafted features + random forest", esm2: "ESM-2 language model + logistic regression" };
+
+api("/api/ml/status").then(s => {
+  models = s.models.filter(m => m.usable);
+  const SHORT = { handcrafted: "Hand-crafted", esm2: "ESM-2" };
+  $("#model").innerHTML = models.length ? models.map((m, i) => `<option value="${m.backend}" title="${esc(NAMES[m.backend])}">${SHORT[m.backend]} · ${pct(m.accuracy)}${i === 0 && models.length > 1 ? " (best)" : ""}</option>`).join("")
+    : "<option>no trained model</option>";
+  const showInfo = () => {
+    const m = models.find(x => x.backend === $("#model").value);
+    $("#modelinfo").innerHTML = m ? `Classes: ${m.classes.map(c => `<span class="pill">${esc(c)}</span>`).join("")} · hold-out accuracy ${pct(m.accuracy)}${tip("holdout")}, on dissimilar proteins ${pct(m.low_similarity_accuracy)}${tip("low_sim")}`
+      : "No trained model yet: build a dataset and train one on the Dataset & ML page.";
+  };
+  $("#model").onchange = showInfo; showInfo();
+  const skipped = s.models.filter(m => !m.usable);
+  if (skipped.length) $("#modelinfo").insertAdjacentHTML("afterend", `<p class="muted small">The ESM-2 model is trained but PyTorch isn't available in this copy of the app, so it is hidden.</p>`);
+}).catch(() => {});
+
+$("#file").onchange = () => { const f = $("#file").files[0]; $("#fname").textContent = f ? f.name : ""; if (f) run(); };
+$("#go").onclick = run;
+
+async function run() {
+  const btn = $("#go"); showMsg($("#msg"), ""); $("#out").innerHTML = ""; $("#summary").innerHTML = "";
+  busy(btn, true, "Classifying");
+  try {
+    const f = $("#file").files[0];
+    let d;
+    if (f) {
+      if (f.size > 5 * 1024 * 1024) throw new Error("File is larger than 5 MB.");
+      const fd = new FormData(); fd.append("file", f); fd.append("backend", $("#model").value);
+      d = await api("/api/classify", { method: "POST", body: fd });
+      $("#file").value = ""; $("#fname").textContent = "";
+    } else {
+      d = await api("/api/classify", { json: { text: $("#t").value, backend: $("#model").value } });
+    }
+    const acc = $("#t").value.trim();
+    if (ACC_RE.test(acc) && d.predictions.length === 1) addRecent(acc.toUpperCase(), d.predictions[0].name.replace(/^\S+\s*/, ""));
+    last = d;
+    renderSummary(d);
+    $("#out").innerHTML = d.predictions.slice(0, 20).map(r => card(r, d)).join("") +
+      (d.predictions.length > 20 ? `<p class="muted">Showing details for the first 20; all ${d.predictions.length} are in the table and the CSV.</p>` : "");
+  } catch (e) { showMsg($("#msg"), e.message); }
+  finally { busy(btn, false); }
+}
+
+function renderSummary(d) {
+  const n = d.predictions.length, unrel = d.predictions.filter(r => !r.reliable).length;
+  $("#summary").innerHTML = `<div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">${n} protein(s) classified <span class="muted" style="font-weight:400">· ${esc(NAMES[d.backend])}</span></h2>
+    <span class="row noprint"><button class="secondary" id="csv">Download CSV</button>${saveButton()}<button class="secondary" onclick="print()">Print / Save as PDF</button></span></div>
+    ${unrel ? `<div class="msg warn">${unrel} of ${n} are very dissimilar from the training data; treat those predictions as unreliable.</div>` : ""}
+    ${n > 1 ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Length</th><th>Prediction</th><th>Confidence</th><th>2nd choice</th><th>Nearest training protein</th><th>Reliable?</th></tr></thead><tbody>
+      ${d.predictions.map(r => `<tr><td>${esc(r.name)}</td><td>${r.length}</td><td><b>${esc(r.prediction)}</b></td><td>${pct(r.confidence)}</td>
+        <td>${esc(r.top2[1].label)} (${pct(r.top2[1].probability)})</td><td class="mono">${esc(r.nn_accession)} · ${r.nn_similarity.toFixed(2)}</td>
+        <td>${r.reliable ? '<span class="pill ok">yes</span>' : '<span class="pill warn">no</span>'}</td></tr>`).join("")}</tbody></table></div>` : ""}</div>`;
+  $("#csv").onclick = () => {
+    const classes = Object.keys(d.predictions[0].probabilities).sort();
+    downloadCsv("classification.csv", "classification", 
+      ["name", "length", "prediction", "confidence", "second_choice", "second_probability", "nearest_training_accession", "nearest_training_class", "nn_similarity", "reliable", "model", ...classes.map(c => "p_" + c)],
+      d.predictions.map(r => [r.name, r.length, r.prediction, r.confidence, r.top2[1].label, r.top2[1].probability, r.nn_accession, r.nn_label, r.nn_similarity, r.reliable, d.backend, ...classes.map(c => r.probabilities[c])]));
+  };
+  const sb = $("#summary .save-btn");
+  if (sb) sb.onclick = () => saveToProject("classification", `Classified ${n} protein(s) (${d.backend})`, { backend: d.backend, predictions: d.predictions });
+}
+
+// "Why?" button: region scan (+ feature contributions for the hand-crafted model)
+document.addEventListener("click", async e => {
+  const b = e.target.closest(".why"); if (!b) return;
+  const box = b.closest(".card").querySelector(".whybox");
+  busy(b, true, $("#model").value === "esm2" ? "Explaining (~30 s)" : "Explaining");
+  try {
+    const x = await api("/api/explain", { json: { text: b.dataset.text, backend: last.backend } });
+    const top = [...x.region_scan.regions].sort((a, c) => c.drop - a.drop).slice(0, 3).filter(r => r.drop > 0.005);
+    box.innerHTML = `<h3>Why "${esc(x.prediction)}"? <span class="muted small" style="font-weight:400">model probability ${pct(x.probability)}</span></h3>
+      <p class="small"><b>Which parts of the sequence mattered.</b> Red bars: hiding that region <i>lowers</i> the probability (the model relied on it).
+        ${top.length ? "Most important: " + top.map(r => `residues ${r.start}–${r.end} (−${(100 * r.drop).toFixed(1)} points)`).join(", ") + "." : "No single region mattered much: the prediction rests on the protein as a whole."}</p>
+      ${regionTrack(x.length, x.region_scan.regions)}
+      ${x.features ? `<p class="small"><b>Which properties mattered</b> (hand-crafted model):</p><ul class="small">${x.features.features.map(f =>
+        `<li>${esc(f.sentence)} <span class="muted">(${f.contribution > 0 ? "+" : ""}${(100 * f.contribution).toFixed(1)} points; this protein ${fmt(f.value, 3)} vs average ${fmt(f.average, 3)})</span></li>`).join("")}</ul>
+        <p class="muted small">Starting point (average over training proteins): ${pct(x.features.bias)}; the pushes above add up to the final ${pct(x.probability)}.</p>` : ""}
+      <details class="small"><summary>How this works</summary>${x.method_notes.map(n => `<p>${esc(n)}</p>`).join("")}</details>`;
+    b.remove();
+  } catch (err) { box.innerHTML = `<div class="msg error">${esc(err.message)}</div>`; busy(b, false); }
+});
+
+function card(r, d) {
+  const other = r.prediction === d.other_label;
+  return `<div class="card">
+    <h2>${esc(r.name)} <span class="muted" style="font-weight:400">(${r.length} aa)</span></h2>
+    ${r.reliable ? "" : `<div class="msg warn">⚠ This protein is very dissimilar from the training data (nearest-neighbour similarity ${r.nn_similarity.toFixed(3)} &lt; ${d.threshold}). The prediction is unreliable.</div>`}
+    ${other ? `<div class="msg info">"other" means the model thinks this protein belongs to <b>none</b> of the trained function classes.${tip("other")}</div>` : ""}
+    <div class="stats">
+      <div class="stat"><div class="k">Prediction</div><div class="v">${esc(r.prediction)}</div><small class="muted">confidence ${pct(r.confidence)}</small>${tip("confidence")}</div>
+      <div class="stat"><div class="k">2nd choice</div><div class="v">${esc(r.top2[1].label)}</div><small class="muted">${pct(r.top2[1].probability)}</small></div>
+      <div class="stat"><div class="k">Nearest training protein${tip("nn")}</div><div class="v mono"><a href="/protein/${esc(r.nn_accession)}">${esc(r.nn_accession)}</a></div><small class="muted">${esc(r.nn_label)} · sim ${r.nn_similarity.toFixed(3)}</small></div>
+    </div>
+    ${barChart(Object.keys(r.probabilities), Object.values(r.probabilities).map(v => 100 * v), { height: 170 })}
+    <button class="secondary why noprint" data-text="${esc(r.sequence ? ">" + r.name + "\n" + r.sequence : r.name)}">Why this prediction?</button>
+    <div class="whybox"></div>
+  </div>`;
+}
+</script>
+{% endblock %}

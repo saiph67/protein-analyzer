@@ -1,0 +1,48 @@
+{% from "_icons.html" import icon %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Protein Analyzer{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%232f5bea'/%3E%3Cpath d='M8 4c0 5 8 5 8 10s-8 6-8 6M16 4c0 5-8 5-8 10' stroke='white' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <script>/* apply saved theme before paint to avoid a flash */try{var t=localStorage.getItem("pa_theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script>window.PA_PUBLIC = {{ 'true' if public else 'false' }};</script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  {% block head %}{% endblock %}
+</head>
+<body data-kind="{% block kind %}{% endblock %}" data-page="{{ page or '' }}">
+<header id="hdr">
+  <nav class="nav" aria-label="Main">
+    <a class="brand" href="/"><span class="logo">{{ icon("dna", 18) }}</span><span class="name">Protein Analyzer</span></a>
+    <div class="navlinks" id="navlinks">
+      <a class="tab {{ 'active' if page == 'analyze' }}" href="/analyze">{{ icon("analyze") }}Analyze</a>
+      <a class="tab {{ 'active' if page == 'search' }}" href="/search">{{ icon("search") }}Search</a>
+      <a class="tab {{ 'active' if page == 'compare' }}" href="/compare">{{ icon("compare") }}Compare</a>
+      <a class="tab {{ 'active' if page == 'mutate' }}" href="/mutate">{{ icon("mutate") }}Mutations</a>
+      <a class="tab {{ 'active' if page == 'lab' }}" href="/lab">{{ icon("lab") }}Lab tools</a>
+      <a class="tab {{ 'active' if page == 'classify' }}" href="/classify">{{ icon("classify") }}Classify</a>
+      <a class="tab {{ 'active' if page == 'ml' }}" href="/ml" title="Dataset & machine learning">{{ icon("ml") }}ML</a>
+      <a class="tab {{ 'active' if page == 'learn' }}" href="/learn">{{ icon("learn") }}Learn</a>
+      {% if not public %}<a class="tab {{ 'active' if page == 'projects' }}" href="/projects">{{ icon("projects") }}Projects</a>{% endif %}
+    </div>
+    <span class="spacer"></span>
+    <button type="button" class="secondary icon" id="qbtn" title="Quick search and jump (press / or Ctrl+K)" aria-label="Quick search">{{ icon("search", 16) }}<kbd>/</kbd></button>
+    <span class="theme-switch" role="group" aria-label="Colour theme" style="margin-left:8px">
+      <button type="button" data-theme-set="light" title="Light mode" aria-label="Light mode">{{ icon("sun") }}</button>
+      <button type="button" data-theme-set="auto" title="Match my system" aria-label="Match system theme">{{ icon("system") }}</button>
+      <button type="button" data-theme-set="dark" title="Dark mode" aria-label="Dark mode">{{ icon("moon") }}</button>
+    </span>
+    <button type="button" id="menubtn" aria-label="Menu" aria-expanded="false" aria-controls="navlinks">{{ icon("menu", 20) }}</button>
+  </nav>
+</header>
+<main>
+{% block content %}{% endblock %}
+<p id="printprov" class="printonly small muted"></p>
+</main>
+<footer class="noprint"><a href="/methods">Methods, data sources &amp; how to cite</a> · Protein Analyzer {{ app_version }} · press <kbd>/</kbd> to jump anywhere</footer>
+<button type="button" id="totop" class="noprint" aria-label="Back to top" title="Back to top">{{ icon("up", 18) }}</button>
+<script>if (document.body.dataset.kind) provenanceFor(document.body.dataset.kind);</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
